@@ -1,47 +1,62 @@
 #include "rclcpp/rclcpp.hpp"
-#include "autoware_perception_msgs/msg/predicted_objects.hpp"
-#include "autoware_planning_msgs/msg/trajectory.hpp"
-#include <string>
+#include "aw_runtime_monitor/aw_recorder.hpp"
+#include "aw_runtime_monitor/planning/scenario_planning_trajectory.hpp"
+#include "aw_runtime_monitor/planning/planning_trajectory.hpp"
+#include "aw_runtime_monitor/groundtruth/groundtruth_size.hpp"
+#include "aw_runtime_monitor/localization/estimated_kinematic.hpp"
+#include "aw_runtime_monitor/perception/perception_object.hpp"
 
-using std::placeholders::_1;
+// using std::placeholders::_1;
 
-std::string PLTR_TOPIC_NAME = "/planning/scenario_planning/trajectory";
-std::string PLTR_MSG_TYPE_STR = "autoware_planning_msgs/msg/Trajectory";
-std::string PLTR_UNVERIFIED_TOPIC_NAME = PLTR_TOPIC_NAME + "_unverified";
+// const std::string PLTR_TOPIC_NAME = "/planning/scenario_planning/trajectory";
+// // const std::string PLTR_MSG_TYPE_STR = "autoware_planning_msgs/msg/Trajectory";
+// const std::string PLTR_UNVERIFIED_TOPIC_NAME = PLTR_TOPIC_NAME + "_unverified";
 
-std::string SCENARIO_PLTR_TOPIC_NAME = "/planning/scenario_planning/scenario_selector/trajectory";
-std::string SCENARIO_PLTR_UNVERIFIED_TOPIC_NAME = SCENARIO_PLTR_TOPIC_NAME + "_unverified";
-
-class AWRuntimeMonitor : public rclcpp::Node
+class AWRuntimeMonitor
 {
 public:
-    AWRuntimeMonitor() : Node("aw_runtime_monitor")
-    {
-        sub_ = this->create_subscription<autoware_planning_msgs::msg::Trajectory>(
-          SCENARIO_PLTR_UNVERIFIED_TOPIC_NAME, 10,
-          std::bind(&AWRuntimeMonitor::callback, this, _1));
+    AWRuntimeMonitor(std::shared_ptr<AWRecorder> recorder) : recorder_(recorder) {
+        // sub_ = this->create_subscription<autoware_planning_msgs::msg::Trajectory>(
+        //   SCENARIO_PLTR_UNVERIFIED_TOPIC_NAME, 10,
+        //   std::bind(&AWRuntimeMonitor::callback, this, _1));
 
         // pub_ = this->create_publisher<autoware_planning_msgs::msg::Trajectory>(
         //   "/planning/output_trajectory", 10);
     }
-
-private:
-    void callback(const autoware_planning_msgs::msg::Trajectory::SharedPtr msg)
-    {
-        RCLCPP_INFO(this->get_logger(), "Received %d", msg->header.stamp.sec);
-        // Example: just republish empty trajectory
-        // autoware_planning_msgs::msg::Trajectory traj;
-        // pub_->publish(traj);
+    void run() {
     }
 
-    rclcpp::Subscription<autoware_planning_msgs::msg::Trajectory>::SharedPtr sub_;
-    // rclcpp::Publisher<autoware_planning_msgs::msg::Trajectory>::SharedPtr pub_;
+private:
+    std::shared_ptr<AWRecorder> recorder_;
 };
 
 int main(int argc, char ** argv)
 {
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<AWRuntimeMonitor>());
+
+    // Create topics
+    std::vector<std::shared_ptr<Topic>> topics;
+    topics.push_back(std::make_shared<PerceptionObjectTopic>());
+    topics.push_back(std::make_shared<EstimatedKinematicTopic>());
+    topics.push_back(std::make_shared<PlanningTrajectoryTopic>());
+    topics.push_back(std::make_shared<GroundtruthSizeTopic>());
+
+    auto recorder = std::make_shared<AWRecorder>(topics);
+    AWRuntimeMonitor monitor(recorder);
+
+    // Create subscriptions for all topics
+    recorder->createSubscriptions();
+
+    rclcpp::on_shutdown([recorder](){
+        // Your cleanup code here
+        std::cout << "Shutting down gracefully (Ctrl+C detected)!" << std::endl;
+        recorder->dumpDataToFile();
+        // e.g., save logs, close files, etc.
+    });
+
+    // Spin the node
+    rclcpp::spin(recorder);
     rclcpp::shutdown();
+    
     return 0;
 }

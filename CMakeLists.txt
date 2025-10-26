@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(AW_Runtime_Monitor_cpp)
+project(aw_runtime_monitor)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -9,22 +9,53 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
 find_package(autoware_perception_msgs REQUIRED)
 find_package(autoware_planning_msgs REQUIRED)
 find_package(autoware_control_msgs REQUIRED)
 find_package(autoware_adapi_v1_msgs REQUIRED)
+find_package(aw_monitor REQUIRED)
 
-add_executable(monitor src/monitor.cpp)
+include_directories(include
+  /usr/local/include
+)
+link_directories(
+  /usr/local/lib
+)
+
+add_executable(monitor 
+  src/topic.cpp
+  src/planning/planning_trajectory.cpp
+  src/planning/planning_shield.cpp
+  src/planning/scenario_planning_trajectory.cpp
+  src/groundtruth/groundtruth_kinematic.cpp
+  src/groundtruth/groundtruth_size.cpp
+  src/localization/estimated_kinematic.cpp
+  src/perception/perception_object.cpp
+  src/recorder/aw_recorder.cpp
+  src/monitor.cpp
+  src/utils.cpp
+)
 
 ament_target_dependencies(monitor
   rclcpp
   std_msgs
+  geometry_msgs
+  tf2
+  tf2_geometry_msgs
   autoware_perception_msgs
   autoware_planning_msgs
   autoware_control_msgs
   autoware_adapi_v1_msgs
+  aw_monitor
 )
 
+target_link_libraries(monitor
+  spot
+  bddx
+)
 install(TARGETS
   monitor
   DESTINATION lib/${PROJECT_NAME}

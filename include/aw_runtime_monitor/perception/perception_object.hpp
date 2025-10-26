@@ -1,0 +1,28 @@
+#ifndef PERCEPTION_OBJECT_HPP
+#define PERCEPTION_OBJECT_HPP
+
+#include "aw_runtime_monitor/topic.hpp"
+#include "autoware_perception_msgs/msg/predicted_objects.hpp"
+#include "aw_runtime_monitor/utils.hpp"
+
+const std::string PREDICTED_OBJ_TOPIC_NAME = "/perception/object_recognition/objects";
+const std::string PREDICTED_OBJ_MSG_TYPE_STR = "autoware_perception_msgs/msg/PredictedObjects";
+
+class PerceptionObjectTopic : public Topic
+{
+public:
+    PerceptionObjectTopic();
+    
+    // Implement pure virtual functions from Topic
+    nlohmann::json msgToJson(const std::shared_ptr<rclcpp::SerializedMessage>& msg) override;
+    std::string traceKey() override;
+    static std::string TRACE_KEY() { return "perception_objects"; }
+
+    rclcpp::QoS qosProfile() {
+        rclcpp::QoS qos(rclcpp::KeepLast(1));
+        qos.reliability(rclcpp::ReliabilityPolicy::Reliable);
+        return qos;
+    }
+};
+
+#endif
