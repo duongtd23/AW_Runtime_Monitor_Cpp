@@ -1,5 +1,6 @@
 #include "aw_runtime_monitor/utils.hpp"
 #include <cmath>
+#include <sstream> // for std::istringstream (read each line)
 
 double roundDouble(double original_value) {
     return std::round(original_value * 1000.0) / 1000.0;
@@ -232,8 +233,84 @@ std::vector<std::string> splitString(const std::string& input, char delimiter) {
 }
 
 void replaceSubStr(std::string& mainString, const std::string& oldSubstring, const std::string& newSubstring) {
-    size_t pos = mainString.find(oldSubstring);
-    if (pos != std::string::npos) {
+    // size_t pos = mainString.find(oldSubstring);
+    // if (pos != std::string::npos) {
+    //     mainString.replace(pos, oldSubstring.length(), newSubstring);
+    // }
+    size_t pos = 0;
+    while ((pos = mainString.find(oldSubstring, pos)) != std::string::npos) {
         mainString.replace(pos, oldSubstring.length(), newSubstring);
+        pos += newSubstring.length();
     }
+}
+
+// Helper: trim leading/trailing whitespace
+std::string trim(const std::string& s) {
+    size_t start = s.find_first_not_of(" \t\r\n");
+    if (start == std::string::npos) return "";
+    size_t end = s.find_last_not_of(" \t\r\n");
+    return s.substr(start, end - start + 1);
+}
+
+// Extract result from Maude output of red command
+// Extract the value after "result:" from the given text
+std::string extractResultFromOutput(const std::string& text) {
+    std::istringstream iss(text);
+    std::string line;
+    std::string result="";
+    bool in_result_block = false;
+
+    while (std::getline(iss, line)) {
+        std::string trimmed = trim(line);
+
+        if (!in_result_block) {
+            // Detect start of "result ..." line
+            if (trimmed.rfind("result", 0) == 0) {  // starts with "result"
+                size_t colon_pos = trimmed.find(':');
+                if (colon_pos != std::string::npos) {
+                    // Extract text after colon
+                    result = trim(trimmed.substr(colon_pos + 1));
+                    in_result_block = true;
+                }
+            }
+        } else {
+            // Continue collecting if the line seems like a continuation
+            if (trimmed.empty()) break; // blank line => stop
+            if (std::isspace(line[0])) {
+                // Indented line, so it's part of the result
+                result += " " + trim(line);
+            } else {
+                // Non-indented and not blank: probably next section
+                break;
+            }
+        }
+    }
+    // if no "result" line found, indicating a syntax error of the safety formula
+    return result;
+}
+
+std::vector<std::string> toVectorString(const std::string& input) {
+    // Pattern to find either a quoted string (e.g., `"token"`) or
+    // a non-space token (for handling potential unquoted tokens).
+    // The pattern captures the content inside the quotes.
+    std::regex pattern(R"("[^"]+"|[^ ]+)");
+    std::vector<std::string> tokens;
+
+    for (std::sregex_iterator it(input.begin(), input.end(), pattern), end; it != end; ++it) {
+        // The match is the full token including quotes.
+        std::string token = it->str();
+
+        // If the token starts and ends with a quote, remove them.
+        if (token.front() == '\"' && token.back() == '\"') {
+            token = token.substr(1, token.length() - 2);
+        }
+        tokens.push_back(token);
+    }
+
+    // // Print the results
+    // for (const auto& token : tokens) {
+    //     std::cout << "Token: " << token << std::endl;
+    // }
+
+    return tokens;
 }

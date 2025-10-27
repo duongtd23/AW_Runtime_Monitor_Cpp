@@ -1,0 +1,163 @@
+load model-checker .
+set print attribute on .
+
+fmod PAIR{X :: TRIV, Y :: TRIV} is
+  sort Pair{X, Y} .
+  op <_;_> : X$Elt Y$Elt -> Pair{X, Y} .
+endfm
+
+mod SYNTAX is
+  pr FLOAT .
+  pr MODEL-CHECKER .
+  pr LTL-SIMPLIFIER .
+  pr META-LEVEL .
+
+  sorts ComparisonOp ComparableExp .
+
+  ops < > <= >= == : -> ComparisonOp [ctor] .
+  op ___ : ComparableExp ComparisonOp Float -> Prop .
+
+  --- propositions
+  --- don't use - or _ in names to avoid syntax error and parsing issues
+  op time : -> ComparableExp .
+  op collision : -> Prop .
+  op pathConfidence : -> ComparableExp .
+  op existenceProb : -> ComparableExp .
+  op distance : -> ComparableExp .
+  op dummy : -> Prop .
+
+  op f : -> Formula .
+--- no need parentheses
+  eq f = [] ((pathConfidence >= 0.1 /\ time <= 3.0) -> ~ collision) .
+endm
+
+--- view Term from TRIV to META-TERM is
+---   sort Elt to Term .
+--- endv
+view TermList from TRIV to META-TERM is
+  sort Elt to TermList .
+endv
+
+mod MANIPULATE-SYNTAX is
+  pr SYNTAX .
+  pr STRING .
+  pr LEXICAL .  --- for string <-> qid list conversion
+  pr LIST{String} .
+  pr PAIR{TermList, List{String}} .
+
+  vars F F2 : Formula .
+  vars P P2 : Prop .
+  vars T T1 T2 T3 : Term .
+  vars TL TL1 TL2 TL3 : TermList .
+  vars Q Q2 Q3 Q4 : Qid .
+  vars C C2 : Constant .
+  vars V V2 : Variable .
+  vars STR STR1 STR2 STR3 STR4 : String .
+  vars STRS STRS2 : List{String} .
+  op rename : Formula -> List{String} .
+  op metaRename : Term -> Pair{TermList, List{String}} .
+  op metaRenameL : TermList -> Pair{TermList, List{String}} .
+
+  --- op error : -> [Formula] .
+  --- ceq rename(F) = downTerm(T, error)
+  ---   if T := metaRename(upTerm(F)) .
+
+  ceq rename(F) = myDownTerm(T) STRS 
+    if < T ; STRS > := metaRename(upTerm(F)) .
+
+  eq metaRename(C) = 
+    if getType(C) == 'Prop
+    then < C ; printTokens(getName(C)) > 
+    else < C ; nil >
+    fi .
+  --- eq metaRename('dummy.Prop) = 'dummy.Prop .
+
+  ceq metaRename('___[T, T2, T3]) = 
+      < Q4 ; STR4 >
+    if getType(T) == 'ComparableExp /\
+       getType(T2) == 'ComparisonOp /\
+       (getType(T3) == 'Float or getType(T3) == 'FiniteFloat) /\
+       Q := getName(T) /\
+       Q2 := getName(T2) /\
+       Q3 := getName(T3) /\
+       STR := printTokens(Q) /\
+       STR2 := comparisonOpRename(Q2) /\
+       STR3 := printTokens(Q3) /\
+       STR4 := STR + "$" + STR2 + "$" + STR3 /\
+       Q4 := tokenize(STR4 + ".Prop") .
+
+  ceq metaRename(Q[TL]) = < Q[TL2] ; STRS >
+    if Q =/= '___ /\
+      < TL2 ; STRS > := metaRenameL(TL) .
+  eq metaRenameL(empty) = < empty ; nil > .
+  ceq metaRenameL((T, TL)) = < (T2 , TL2) ; (STRS STRS2) >
+    if < T2 ; STRS > := metaRename(T) /\
+      < TL2 ; STRS2 > := metaRenameL(TL) .
+
+  --- convert follow latex style
+  op comparisonOpRename : Qid -> String .
+  eq comparisonOpRename('<) = "lt" .
+  eq comparisonOpRename('<=) = "le" .
+  eq comparisonOpRename('>) = "gt" .
+  eq comparisonOpRename('>=) = "ge" .
+  eq comparisonOpRename('==) = "eq" .
+
+  --- op myDownTerm : Term -> String .
+  op myDownTerm : Term -> String .
+  op myDownTermL : TermList -> String .
+  eq myDownTermL(T) = myDownTerm(T) .
+  ceq myDownTermL((T1 , TL1)) = 
+    myDownTerm(T1) + ", " + myDownTermL(TL1) 
+  if TL1 =/= (empty).TermList .
+
+  eq myDownTerm(C) = printTokens(getName(C)) .
+  eq myDownTerm(V) = printTokens(getName(V)) .
+  ceq myDownTerm(Q[TL1]) = 
+    if find(STR1, "_", 0) == notFound 
+    then replaceEqWithoutUnderSc(STR1, TL1)
+    else
+      if find(STR1, "_", 0) == 0 
+      then "(" + replaceEqWithUnderSc(STR1, TL1) + ")" 
+      else replaceEqWithUnderSc(STR1, TL1)
+      fi
+    fi
+  if STR1 := printTokens(Q) .
+
+  op replaceEqWithoutUnderSc : String TermList -> String .
+  eq replaceEqWithoutUnderSc(STR1, TL1) = 
+    STR1 + "(" + myDownTermL(TL1) + ")" .
+
+  op replaceEqWithUnderSc : String TermList -> String .
+  eq replaceEqWithUnderSc("", TL1) = "" .
+  eq replaceEqWithUnderSc(STR1, TL1) =
+    if find(STR1, "_", 0) == notFound 
+    then STR1
+    else 
+      if find(STR1, "_", 0) == 0 
+      then myDownTerm(headTL(TL1)) + 
+          replaceEqWithUnderSc(substr(STR1, 1, sd(length(STR1),1)), 
+              removeHeadTL(TL1))
+      else " " + substr(STR1, 0, find(STR1, "_", 0)) + " " +
+          replaceEqWithUnderSc(substr(STR1, find(STR1, "_", 0),
+            sd(length(STR1), find(STR1, "_", 0))), TL1)
+      fi
+    fi .
+
+  op headTL : TermList -> Term .
+  op removeHeadTL : TermList -> TermList .
+  eq headTL((T , TL)) = T .
+  eq removeHeadTL((T , TL)) = TL .
+endm
+
+--- red f .
+--- red upTerm(time <= 2.0) .
+--- red rename(time <= 2.0) .
+--- red rename(collision /\ time <= 2.0) .
+--- red rename(pathConfidence >= 0.1 /\ time <= 3.0 -> distance > 5.0) .
+
+red rename(f) .
+
+--- parse collision .
+--- parse [] (path-confidence >= 0.1 /\ time <= 3.0 -> distance > 5.0) .
+--- red collision .
+--- red  .

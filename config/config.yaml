@@ -1,0 +1,4 @@
+aw_recorder:
+  ros__parameters:
+    safety_formula: '[] (pathConfidence >= 0.1 /\ time <= 3.0 -> ~ collision)'
+    spec_syntax_file_path: 'formal_spec/syntax.maude'

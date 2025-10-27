@@ -72,7 +72,7 @@ public:
     PlanningShield(float speed_threshold_activation=3.0, float min_acc=-7.0, float min_jerk=-12.0)
     : speed_threshold_activation_(speed_threshold_activation), min_acc_(min_acc), min_jerk_(min_jerk) {}
 
-    PlanningShield(std::string spec_formula_str, std::vector<std::string> propositions, 
+    PlanningShield(std::string spec_formula_str, std::string spec_syntax_file_path,
             float speed_threshold_activation=3.0, float min_acc=-7.0, float min_jerk=-12.0);
 
     // void intervene(const autoware_planning_msgs::msg::Trajectory& planning_msg, 
@@ -110,6 +110,7 @@ private:
     std::vector<std::string> propositions_;
     spot::parsed_formula spec_formula_;
     std::map<std::string, ComparisonFunction> proposition_map_;
+    std::string spec_syntax_file_path_;
 };
 
 #endif

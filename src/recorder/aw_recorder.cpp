@@ -4,14 +4,20 @@
 #include <spot/misc/version.hh>
 
 using std::placeholders::_1;
+const std::string SAFETY_FORMULA = "[] (pathConfidence >= 0.1 /\\ time <= 3.0 -> ~ collision)";
+const std::string SPEC_SYNTAX_FILE_PATH = "formal_spec/syntax.maude";
 
 AWRecorder::AWRecorder(std::vector<std::shared_ptr<Topic>> topics) 
         : Node("aw_recorder"), topics_(topics) {
-    // this->plan_shield_ = PlanningShield("(False R ( ~ collision \\/ ( ~ time$le$3.0 \\/  ~ pathConfidence$ge$1.0e-1)))",
-    this->plan_shield_ = PlanningShield("(False R ( ~ collision \\/ ( ~ time$le$3.0 \\/  ~ pathConfidence$ge$1.0000000000000001e-1)))", {"collision", "time$le$3.0",
-    "pathConfidence$ge$1.0000000000000001e-1"});
+    
+    this->declare_parameter<std::string>("safety_formula", SAFETY_FORMULA);
+    this->declare_parameter<std::string>("spec_syntax_file_path", SPEC_SYNTAX_FILE_PATH);
+    std::string safety_formula_;
+    std::string spec_syntax_file_path;
+    this->get_parameter("safety_formula", safety_formula_);
+    this->get_parameter("spec_syntax_file_path", spec_syntax_file_path);
 
-    // this->plan_shield_.logger = this->get_logger();
+    this->plan_shield_ = PlanningShield(safety_formula_, spec_syntax_file_path);
     this->recorded_data_[PlanningTrajectoryTopic::TRACE_KEY()] = nlohmann::json::array();
     this->recorded_data_[EstimatedKinematicTopic::TRACE_KEY()] = nlohmann::json::array();
     this->recorded_data_[PerceptionObjectTopic::TRACE_KEY()] = nlohmann::json::array();

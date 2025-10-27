@@ -34,5 +34,4 @@ private:
     void unifiedCallback(const std::shared_ptr<rclcpp::SerializedMessage> msg, 
                         const std::shared_ptr<Topic> topic);
     void save_data(const std::shared_ptr<Topic> topic, const std::shared_ptr<rclcpp::SerializedMessage> msg);
-
 };

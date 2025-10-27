@@ -12,6 +12,12 @@
 #include <spot/twaalgos/translate.hh>
 #include <spot/twaalgos/emptiness.hh>
 
+// for CLI interaction with Maude
+#include <unistd.h>
+#include <pty.h>
+#include <sys/wait.h>
+
+
 // PlanningPoint member methods
 PlanningPoint::PlanningPoint(const glm::vec2& _position, float _velocity, float _accel, 
             float _time_to_next_point, float _time_from_start)
@@ -180,12 +186,118 @@ PlanningTrajectory PlanningShield::toPlanningTrajectoryObj(const autoware_planni
     return planning_points;
 }
 
-PlanningShield::PlanningShield(std::string spec_formula_str, std::vector<std::string> propositions, 
+
+/**
+ * Helper functions for PlanningShield class
+ */
+// Send a Maude command
+void sendCommand(int fd, const std::string& cmd) {
+    std::string full_cmd = cmd + "\n";
+    write(fd, full_cmd.c_str(), full_cmd.size());
+}
+// Wait until a specific prompt string appears in the Maude output
+bool waitForPrompt(int fd, const std::string& prompt, std::string* captured_output = nullptr) {
+    std::string buffer;
+    char ch;
+    while (read(fd, &ch, 1) > 0) {
+        buffer += ch;
+        if (buffer.size() >= prompt.size() &&
+            buffer.compare(buffer.size() - prompt.size(), prompt.size(), prompt) == 0) {
+            if (captured_output)
+                *captured_output = buffer;
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Rename formula via Maude CLI
+ * E.g.,
+ * Return a vector of string, the first one is the renamed formula, and
+ * the rest are the renamed propositions.
+ */
+std::vector<std::string> renameFormula(const std::string& formula_str, 
+        const std::string& spec_syntax_file_path) {
+    int master_fd;
+    pid_t pid = forkpty(&master_fd, nullptr, nullptr, nullptr);
+
+    if (pid == 0) {
+        // Child process: execute Maude
+        execlp("maude", "maude", (char*)nullptr);
+        perror("execlp failed");
+        return {};
+    }
+
+    // Parent process
+    if (!waitForPrompt(master_fd, "Maude>")) {
+        std::cerr << "Failed to start Maude." << std::endl;
+        return {};
+    }
+    sendCommand(master_fd, "load " + spec_syntax_file_path);
+
+    if (!waitForPrompt(master_fd, "Maude>")) {
+        std::cerr << "Failed to load model." << std::endl;
+        return {};
+    }
+
+    // std::cout << "\n[Model loaded successfully]\n";
+    sendCommand(master_fd, "red rename(" + formula_str + ") .");
+
+    std::string reduction_output;
+    std::vector<std::string> result = {};
+    if (waitForPrompt(master_fd, "Maude>", &reduction_output)) {
+        // std::cout << "\n=== Reduction Output ===\n";
+        size_t pos = reduction_output.find("Maude>");
+        if (pos != std::string::npos)
+            reduction_output.erase(pos);
+        // std::cout << reduction_output << std::endl;
+        std::string result_str = extractResultFromOutput(reduction_output);
+        if (result_str == "") {
+            std::cerr << "A syntax error with formula: " << formula_str << std::endl;
+            std::cerr << "Reduction output from Maude:\n" << reduction_output << std::endl;
+        }
+        else {
+            result = toVectorString(result_str);
+        }
+        // std::cout << "\n[Extracted Result]:" << result << std::endl;
+    } else {
+        std::cerr << "No reduction result captured." << std::endl;
+    }
+
+    // Quit Maude
+    sendCommand(master_fd, "quit");
+    waitpid(pid, nullptr, 0);
+    return result;
+}
+
+
+PlanningShield::PlanningShield(std::string spec_formula_str, std::string spec_syntax_file_path,
         float speed_threshold_activation, float min_acc, float min_jerk)
-    : speed_threshold_activation_(speed_threshold_activation), min_acc_(min_acc), min_jerk_(min_jerk) {
-    for (std::string& prop : propositions) {
+    : speed_threshold_activation_(speed_threshold_activation), min_acc_(min_acc), 
+      min_jerk_(min_jerk), spec_syntax_file_path_(spec_syntax_file_path) {
+    std::vector<std::string> renamed_spec_props = renameFormula(spec_formula_str, spec_syntax_file_path);
+    if (renamed_spec_props.empty()) {
+        throw std::runtime_error("Failed to parse the formula.");
+    }
+
+    std::string renamed_spec_formula_str = renamed_spec_props[0];
+    // for (const auto& token : renamed_spec_props) {
+    //     std::cout << "Renamed token: " << token << std::endl;
+    // }
+
+    for (size_t i = 1; i < renamed_spec_props.size(); ++i) {
+        std::string& prop = renamed_spec_props[i];
         if (prop.find('$') != std::string::npos) {
             std::vector<std::string> tokens = splitString(prop, '$');
+
+            if (prop.find('-') != std::string::npos) {
+                // e.g., time-le-1.0e-1
+                std::string old_str = prop;
+                std::replace(prop.begin(), prop.end(), '-', '_');
+                replaceSubStr(renamed_spec_formula_str, old_str, prop);
+            }
+            std::replace(prop.begin(), prop.end(), '$', '_');
             if (tokens[1] == "gt") {
                 this->proposition_map_[prop] = [threshold = std::stof(tokens[2])](float val) {
                     return val > threshold;
@@ -215,27 +327,25 @@ PlanningShield::PlanningShield(std::string spec_formula_str, std::vector<std::st
                 std::cerr << "[WARNING] Unsupported comparison operator in proposition: " << prop << std::endl;
             }
         }
-
-        if (prop.find('-') != std::string::npos) {
-            // e.g., time-le-1.0e-1
-            std::string old_str = prop;
-            std::replace(prop.begin(), prop.end(), '-', '_');
-            replaceSubStr(spec_formula_str, old_str, prop);
-        }
-        std::replace(prop.begin(), prop.end(), '$', '_');
         this->propositions_.push_back(prop);
     }
 
-    std::replace(spec_formula_str.begin(), spec_formula_str.end(), '$', '_');
-    std::cout << spec_formula_str << std::endl;
+    std::replace(renamed_spec_formula_str.begin(), renamed_spec_formula_str.end(), '$', '_');
+    replaceSubStr(renamed_spec_formula_str, "\\\\", "\\");
+
+    std::cout << "Spec formula: " << renamed_spec_formula_str << std::endl;
     for (const std::string& p : this->propositions_) {
         std::cout << "Proposition: " << p << std::endl;
     }
+    std::cout << this->proposition_map_.size() << std::endl;
+    for (const auto& [key, _] : this->proposition_map_) {
+        std::cout << "Mapped proposition: " << key << std::endl;
+    }
 
     try {
-        this->spec_formula_ = spot::parse_infix_psl(spec_formula_str);
+        this->spec_formula_ = spot::parse_infix_psl(renamed_spec_formula_str);
         if (this->spec_formula_.format_errors(std::cerr))
-            std::cerr << "[ERROR] Failed to parse specification formula: " << spec_formula_str << std::endl;
+            std::cerr << "[ERROR] Failed to parse specification formula: " << renamed_spec_formula_str << std::endl;
     } catch (const std::exception& e) {
         std::cerr << "[ERROR] Failed to parse specification formula: " << e.what() << std::endl;
     }
@@ -496,7 +606,7 @@ bool PlanningShield::evaluateSpec(const std::vector<float>& time_series,
                 } else if (startsWith(prop, "pathConfidence")) {
                     val = path_confidence;
                 } else {
-                    std::cerr << "[WARNING] Unsupported proposition: " << prop << std::endl;
+                    std::cerr << "[WARNING] Unsupported proposition : " << prop << std::endl;
                     continue;
                 }
                 prop_holds = this->proposition_map_[prop](val);

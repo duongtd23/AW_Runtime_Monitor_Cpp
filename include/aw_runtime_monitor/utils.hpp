@@ -14,13 +14,14 @@
 #include "tf2/LinearMath/Matrix3x3.h"
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
-#include <glm/glm.hpp>  // for vector
+#include <glm/glm.hpp>  // for vector computation
 #include <glm/gtx/norm.hpp> 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/constants.hpp>
 #include <glm/gtx/rotate_vector.hpp>
 #include <vector>
 #include <cmath>
+#include <regex>
 
 double roundDouble(double original_value);
 nlohmann::json vector3ToJsonPoint(const geometry_msgs::msg::Vector3& obj, bool round=true);
@@ -47,5 +48,9 @@ bool isCollision(const std::vector<glm::vec2>& vertices1, const std::vector<glm:
 bool startsWith(const std::string& text, const std::string& prefix);
 std::vector<std::string> splitString(const std::string& input, char delimiter);
 void replaceSubStr(std::string& mainString, const std::string& oldSubstring, const std::string& newSubstring);
+
+std::string trim(const std::string& s);
+std::string extractResultFromOutput(const std::string& text);
+std::vector<std::string> toVectorString(const std::string& result);
 
 #endif
