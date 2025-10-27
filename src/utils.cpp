@@ -1,6 +1,7 @@
 #include "aw_runtime_monitor/utils.hpp"
 #include <cmath>
 #include <sstream> // for std::istringstream (read each line)
+#include "aw_runtime_monitor/localization/estimated_kinematic.hpp"
 
 double roundDouble(double original_value) {
     return std::round(original_value * 1000.0) / 1000.0;
@@ -313,4 +314,21 @@ std::vector<std::string> toVectorString(const std::string& input) {
     // }
 
     return tokens;
+}
+
+glm::vec3 jsonPointToVector3(const nlohmann::json& dict_point) {
+    float x = dict_point["x"];
+    float y = dict_point["y"];
+    float z = dict_point["z"];
+    return glm::vec3(x, y, z);
+}
+
+
+glm::vec3 getCurrentVelocity(const nlohmann::json& recorded_messages) {
+    auto kin = recorded_messages[EstimatedKinematicTopic::TRACE_KEY()].back();
+    return jsonPointToVector3(kin["twist"]["linear"]);
+}
+
+float getCurrentSpeed(const nlohmann::json& recorded_messages) {
+    return glm::length(getCurrentVelocity(recorded_messages));
 }

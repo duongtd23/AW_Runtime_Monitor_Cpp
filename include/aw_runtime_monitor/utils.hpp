@@ -53,4 +53,7 @@ std::string trim(const std::string& s);
 std::string extractResultFromOutput(const std::string& text);
 std::vector<std::string> toVectorString(const std::string& result);
 
+glm::vec3 getCurrentVelocity(const nlohmann::json& recorded_messages);
+float getCurrentSpeed(const nlohmann::json& recorded_messages);
+
 #endif

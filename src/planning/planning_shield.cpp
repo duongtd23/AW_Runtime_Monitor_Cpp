@@ -57,11 +57,9 @@ std::vector<glm::vec2> ConstantHeadingVehicle::getVerticesAtTime(float time, flo
     return result;
 }
 
-// helper functions
-glm::vec2 extractObjPosition(const autoware_planning_msgs::msg::TrajectoryPoint& entry) {
-    return glm::vec2(entry.pose.position.x, entry.pose.position.y);
-}
-
+/**
+ * Helper functions for PlanningTrajectory class
+ */
 std::tuple<size_t, float> extractClosestPoint(const std::vector<autoware_planning_msgs::msg::TrajectoryPoint>& raw_points, const glm::vec2& current_pos) {
     float min_dis = 1e9;
     size_t _id = -1;
@@ -119,6 +117,28 @@ PlanningTrajectory::PlanningTrajectory(const ConstantHeadingVehicle& _ego_curren
     : ego_current_state(_ego_current_state) ,
       start_point_id(_start_point_id),
       future_points(_future_points) {
+}
+
+void PlanningTrajectory::parseFuturePoints(const std::vector<autoware_planning_msgs::msg::TrajectoryPoint>& points_raw) {
+    auto pva_tuple = getPosAndVels(points_raw);
+    std::vector<glm::vec2> positions = std::get<0>(pva_tuple);
+    std::vector<float> long_vels = std::get<1>(pva_tuple);
+    std::vector<float> accels = std::get<2>(pva_tuple);
+
+    this->future_points.clear();
+    float time_from_start = 0.0;
+    for (size_t i = 0; i < positions.size(); ++i) {
+        float time_step = timestamp(points_raw[i].time_from_start, false);
+        if (time_step == 0 && 1 <= i && i <= positions.size() - 2) {
+            time_step = deriveTimeStep(
+                positions[i], long_vels[i], accels[i], positions[i + 1], long_vels[i + 1], accels[i + 1]);
+        } else {
+            this->future_points.push_back(PlanningPoint(
+                positions[i], long_vels[i], accels[i], time_step, time_from_start
+            ));
+        }
+        time_from_start += time_step;
+    }
 }
 
 // extract planning trajectory
@@ -271,20 +291,39 @@ std::vector<std::string> renameFormula(const std::string& formula_str,
     return result;
 }
 
+std::vector<autoware_planning_msgs::msg::TrajectoryPoint> mergePoints(
+        const std::vector<autoware_planning_msgs::msg::TrajectoryPoint>& v1,
+        size_t range,
+        const std::vector<autoware_planning_msgs::msg::TrajectoryPoint>& v2) {
+    std::vector<autoware_planning_msgs::msg::TrajectoryPoint> result;
+    result.insert(result.end(), v1.begin(), v1.begin() + std::min(range, v1.size()));
+    result.insert(result.end(), v2.begin(), v2.end());
+    return result;
+}
 
-PlanningShield::PlanningShield(std::string spec_formula_str, std::string spec_syntax_file_path,
+/**
+ * PlanningShield member methods
+ */
+PlanningShield::PlanningShield(
+        rclcpp::Publisher<autoware_planning_msgs::msg::Trajectory>::SharedPtr verified_trajectory_publisher,
+        rclcpp::Publisher<autoware_planning_msgs::msg::Trajectory>::SharedPtr verified_motion_velocity_publisher,
+        std::string spec_formula_str, std::string spec_syntax_file_path,
         float speed_threshold_activation, float min_acc, float min_jerk)
-    : speed_threshold_activation_(speed_threshold_activation), min_acc_(min_acc), 
+    : verified_trajectory_publisher_(verified_trajectory_publisher),
+      verified_motion_velocity_publisher_(verified_motion_velocity_publisher),
+      speed_threshold_activation_(speed_threshold_activation), min_acc_(min_acc),
       min_jerk_(min_jerk), spec_syntax_file_path_(spec_syntax_file_path) {
+
+    auto roots = solveRootPolynomial2(2.0, -3.0, 1.0);
+    std::cout << "Test roots: ";
+    for (const auto& r : roots) {
+        std::cout << r << " ";
+    }
     std::vector<std::string> renamed_spec_props = renameFormula(spec_formula_str, spec_syntax_file_path);
     if (renamed_spec_props.empty()) {
         throw std::runtime_error("Failed to parse the formula.");
     }
-
     std::string renamed_spec_formula_str = renamed_spec_props[0];
-    // for (const auto& token : renamed_spec_props) {
-    //     std::cout << "Renamed token: " << token << std::endl;
-    // }
 
     for (size_t i = 1; i < renamed_spec_props.size(); ++i) {
         std::string& prop = renamed_spec_props[i];
@@ -351,20 +390,22 @@ PlanningShield::PlanningShield(std::string spec_formula_str, std::string spec_sy
     }
 }
 
-bool PlanningShield::verify(const autoware_planning_msgs::msg::Trajectory& trajectory_msg, const nlohmann::json& recorded_data){
+void PlanningShield::intervene(const autoware_planning_msgs::msg::Trajectory& planning_msg, 
+        const nlohmann::json& recorded_data) {
     auto start_time = std::chrono::high_resolution_clock::now();
 
     if (recorded_data[PerceptionObjectTopic::TRACE_KEY()].empty() ||
         recorded_data[EstimatedKinematicTopic::TRACE_KEY()].empty() ||
         !recorded_data.contains(GroundtruthSizeTopic::TRACE_KEY())) {
-        return true;
+        this->verified_trajectory_publisher_->publish(planning_msg);
+        return;
     }
-
     // cache ego shape
     if (this->ego_shape_.empty()) {
         auto gtsize = recorded_data[GroundtruthSizeTopic::TRACE_KEY()];
         if (!gtsize.contains("vehicle_sizes")) {
-            return true;
+            this->verified_trajectory_publisher_->publish(planning_msg);
+            return;
         }
         for (const auto& entry : gtsize["vehicle_sizes"]) {
             if (entry["name"] == "ego") {
@@ -373,30 +414,74 @@ bool PlanningShield::verify(const autoware_planning_msgs::msg::Trajectory& traje
             }
         }
         if (this->ego_shape_.empty()) {
-            return true;
+            this->verified_trajectory_publisher_->publish(planning_msg);
+            return;
         }
     }
-    bool safe = this->verify(trajectory_msg,
-                    recorded_data[PerceptionObjectTopic::TRACE_KEY()],
-                    recorded_data[EstimatedKinematicTopic::TRACE_KEY()].back(),
-                    this->ego_shape_);
-    if (!safe) {
-        auto end_time =  std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
-        std::cout << "Time: " << duration << " ms" << std::endl;
+    double current_time = timestamp(planning_msg.header.stamp);
+    bool safe = true;
+    if (getCurrentSpeed(recorded_data) >= this->speed_threshold_activation_) {
+        const nlohmann::json& perception_msgs = recorded_data[PerceptionObjectTopic::TRACE_KEY()];
+        const nlohmann::json& estimated_kinematic = recorded_data[EstimatedKinematicTopic::TRACE_KEY()].back();
+
+        // verify the safety
+        PlanningTrajectory planning_points = this->toPlanningTrajectoryObj(planning_msg, estimated_kinematic,this->ego_shape_);
+        safe = this->verify(planning_points, perception_msgs);
+        if (!safe) {
+            std::cout << "Unsafe planning trajectory. Replace with a safe one..." << std::endl;
+            std::vector<autoware_planning_msgs::msg::TrajectoryPoint> new_trajectory_points = 
+                this->resampleTrajectoryPoints(
+                    planning_msg, 
+                    planning_points.start_point_id, 
+                    perception_msgs,
+                    planning_points.ego_current_state);
+            autoware_planning_msgs::msg::Trajectory new_trajectory_msg;
+            new_trajectory_msg.header = planning_msg.header;
+            new_trajectory_msg.points = new_trajectory_points;
+
+            this->verified_trajectory_publisher_->publish(new_trajectory_msg);
+
+            auto end_time =  std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+            std::cout << "Time: " << duration << " ms" << std::endl;
+
+            // validate in the last planning point, the vehicle's speed is 0
+            if (std::abs(new_trajectory_points.back().longitudinal_velocity_mps) > 1e-4) {
+                std::cerr << "[ERROR] The last point of revised trajectory does not have speed 0" << std::endl;
+            }
+            this->stop_point_ = extractObjPosition(new_trajectory_points.back());
+            this->has_stop_point_ = true;
+            this->last_stop_time_ = current_time;
+        }
+    } 
+    if (safe) {
+        // if safe, publish the trajectory
+        this->verified_trajectory_publisher_->publish(planning_msg);
+        if (current_time >= this->last_stop_time_ + 4.0) {
+            // reset
+            std::cout << "Restart moving..." << std::endl;
+            this->has_stop_point_ = false;
+            this->last_stop_time_ = 1e20;
+        }
     }
-    return safe;
 }
 
-bool PlanningShield::verify(const autoware_planning_msgs::msg::Trajectory& trajectory_msg, const nlohmann::json& perception_msgs, const nlohmann::json& estimated_kinematic, const nlohmann::json& ego_shape){
+void PlanningShield::interveneMotionVelocityMsg(const autoware_planning_msgs::msg::Trajectory& trajectory_msg) {
+    if (this->has_stop_point_) {
+        autoware_planning_msgs::msg::Trajectory new_msg = 
+            injectMotionVelocityTrajectory(trajectory_msg, this->stop_point_);
+        this->verified_motion_velocity_publisher_->publish(new_msg);
+    } else {
+        this->verified_motion_velocity_publisher_->publish(trajectory_msg);
+    }
+}
+
+bool PlanningShield::verify(const PlanningTrajectory& planning_points, 
+        const nlohmann::json& perception_msgs){
     auto latest_perception_msg = perception_msgs.back();
     if (latest_perception_msg["objects"].empty()) {
         return true;
     }
-    // std::cout << "Debug 3" << std::endl;
-    PlanningTrajectory planning_points = this->toPlanningTrajectoryObj(trajectory_msg, estimated_kinematic, ego_shape);
-
-    // std::cout << "Debug 4" << std::endl;
 
     for (const auto& perceived_obj : latest_perception_msg["objects"]) {
         // perceived object dimension
@@ -438,8 +523,6 @@ bool PlanningShield::verify(const autoware_planning_msgs::msg::Trajectory& traje
             // }
         }
     }
-    // std::cout << latest_perception_msg.dump(2) << std::endl;
-    // std::cout << estimated_kinematic.dump(2) << std::endl;
     return true;
 }
 
@@ -571,6 +654,37 @@ bool PlanningShield::verifyPredictNpcPath(const PlanningTrajectory& planning_poi
     return this->evaluateSpec(time_series, collision_series, distance_series, existence_prob, path_confidence);
 }
 
+// Resample the trajectory to guarantee the safety requirements
+std::vector<autoware_planning_msgs::msg::TrajectoryPoint> PlanningShield::resampleTrajectoryPoints(
+        const autoware_planning_msgs::msg::Trajectory& trajectory_msg, 
+        size_t _id, 
+        const nlohmann::json& perception_msgs, 
+        const ConstantHeadingVehicle& ego_current_state) {
+    float jerk = -6.0;
+    float acc = -3.0;
+    while (true) {
+        std::vector<autoware_planning_msgs::msg::TrajectoryPoint> new_ahead_points = 
+            resampleTrajectory(trajectory_msg.points, _id, -jerk, acc);
+
+        PlanningTrajectory new_planning_points = PlanningTrajectory(ego_current_state);
+        new_planning_points.parseFuturePoints(new_ahead_points);
+
+        if (this->verify(new_planning_points, perception_msgs)) {
+            // this new trajectory is safe
+            std::cout << "Braking profile acc: " << acc << ", jerk: " << jerk << " was applied to revise trajectory." << std::endl;
+            return mergePoints(trajectory_msg.points, _id, new_ahead_points);
+        }
+        jerk -= 2.0;
+        acc -= 1.0;
+        if (jerk < this->min_jerk_ || acc < this->min_acc_) {
+            // Cannot find a trajectory that makes no collision
+            // Apply the strongest braking profile
+            std::cout << "Maximum braking profile was applied in the revised trajectory." << std::endl;
+            return mergePoints(trajectory_msg.points, _id, new_ahead_points);
+        }
+    }
+}
+
 /**
  * evaluate the safety specification by constructing a Kripke structure 
  * and checking the formula with Spot.
@@ -651,23 +765,19 @@ bool PlanningShield::evaluateSpec(const std::vector<float>& time_series,
     spot::twa_graph_ptr af = spot::translator(dict).run(f);
 
     bool result = !k->intersecting_run(af);
-    // if (auto run = k->intersecting_run(af))
-    //     result = false;
-    // else
-    //     result = true;
 
-    bool verified = true;
-    for (size_t i = 0; i < time_series.size(); ++i) {
-        if (time_series[i] > 3.0) {
-            break;
-        }
-        if (collision_series[i] && path_confidence >= 0.1) {
-            verified = false;
-            break;
-        }
-    }
-    if (result != verified) {
-        std::cout << "[ERROR] Spot verification result inconsistent with direct evaluation!" << std::endl;
-    }
+    // bool verified = true;
+    // for (size_t i = 0; i < time_series.size(); ++i) {
+    //     if (time_series[i] > 3.0) {
+    //         break;
+    //     }
+    //     if (collision_series[i] && path_confidence >= 0.1) {
+    //         verified = false;
+    //         break;
+    //     }
+    // }
+    // if (result != verified) {
+    //     std::cout << "[ERROR] Spot verification result inconsistent with direct evaluation!" << std::endl;
+    // }
     return result;
 }

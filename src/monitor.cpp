@@ -38,7 +38,8 @@ int main(int argc, char ** argv)
     std::vector<std::shared_ptr<Topic>> topics;
     topics.push_back(std::make_shared<PerceptionObjectTopic>());
     topics.push_back(std::make_shared<EstimatedKinematicTopic>());
-    topics.push_back(std::make_shared<PlanningTrajectoryTopic>());
+    topics.push_back(std::make_shared<UnverifiedPlanningTrajectoryTopic>());
+    topics.push_back(std::make_shared<UnverifiedScenarioPlanningTrajectoryTopic>());
     topics.push_back(std::make_shared<GroundtruthSizeTopic>());
 
     auto recorder = std::make_shared<AWRecorder>(topics);

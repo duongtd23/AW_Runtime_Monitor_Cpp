@@ -1,19 +1,16 @@
 #ifndef PLANNING_SHIELD_HPP
 #define PLANNING_SHIELD_HPP
 
-#include "autoware_planning_msgs/msg/trajectory.hpp"
+#include "aw_runtime_monitor/planning/trajectory_manipulation.hpp"
 #include "rclcpp/rclcpp.hpp"
-#include "aw_runtime_monitor/utils.hpp"
 #include "nlohmann/json.hpp"
-#include <glm/glm.hpp>  // for vector
-#include <glm/gtx/norm.hpp> 
 #include <tuple>
 #include <spot/tl/parse.hh>
 #include <algorithm> // Required for std::replace
 #include <functional>  // for std::function
 #include <map>
 
-const float TIME_BOUND = 3.0;
+const float TIME_BOUND = 4.0;
 
 class ConstantHeadingVehicle
 {
@@ -56,7 +53,8 @@ public:
     // std::vector<PlanningPoint> past_points;
     size_t start_point_id;
     std::vector<PlanningPoint> future_points;
-
+    
+    void parseFuturePoints(const std::vector<autoware_planning_msgs::msg::TrajectoryPoint>& points_raw);
     void parseFuturePointsWithoutTimesteps(const std::vector<autoware_planning_msgs::msg::TrajectoryPoint>& points_raw, 
         size_t start_id, bool skip_tails=true);
     void parsePastFuturePoints(const std::vector<autoware_planning_msgs::msg::TrajectoryPoint>& raw_points);
@@ -72,18 +70,18 @@ public:
     PlanningShield(float speed_threshold_activation=3.0, float min_acc=-7.0, float min_jerk=-12.0)
     : speed_threshold_activation_(speed_threshold_activation), min_acc_(min_acc), min_jerk_(min_jerk) {}
 
-    PlanningShield(std::string spec_formula_str, std::string spec_syntax_file_path,
-            float speed_threshold_activation=3.0, float min_acc=-7.0, float min_jerk=-12.0);
+    PlanningShield(
+        rclcpp::Publisher<autoware_planning_msgs::msg::Trajectory>::SharedPtr verified_trajectory_publisher,
+        rclcpp::Publisher<autoware_planning_msgs::msg::Trajectory>::SharedPtr verified_motion_velocity_publisher,
+        std::string spec_formula_str, std::string spec_syntax_file_path,
+        float speed_threshold_activation=3.0, float min_acc=-7.0, float min_jerk=-12.0);
+    
+    void intervene(const autoware_planning_msgs::msg::Trajectory& trajectory_msg, 
+                   const nlohmann::json& recorded_data);
+    void interveneMotionVelocityMsg(const autoware_planning_msgs::msg::Trajectory& trajectory_msg);
 
-    // void intervene(const autoware_planning_msgs::msg::Trajectory& planning_msg, 
-    //                const nlohmann/json.hpp& perception_msgs,
-    //                const nlohmann/json.hpp& estimated_kinematic);
-
-    bool verify(const autoware_planning_msgs::msg::Trajectory& trajectory_msg, const nlohmann::json& recorded_data);
-    bool verify(const autoware_planning_msgs::msg::Trajectory& planning_msg, 
-                const nlohmann::json& perception_msgs,
-                const nlohmann::json& estimated_kinematic,
-                const nlohmann::json& ego_shape);
+    bool verify(const PlanningTrajectory& planning_points, 
+                const nlohmann::json& perception_msgs);
     bool verifySimulatedNpcPath(const PlanningTrajectory& planning_points,
                                 float existence_prob, const glm::vec2& current_position, float current_heading,
                                 const glm::vec2& current_vel, const std::vector<glm::vec2>& npc_local_vertices,
@@ -98,14 +96,27 @@ public:
         const std::vector<float>& distance_series,
         float existence_prob,
         float path_confidence);
+    
+    std::vector<autoware_planning_msgs::msg::TrajectoryPoint> resampleTrajectoryPoints(
+        const autoware_planning_msgs::msg::Trajectory& trajectory_msg, 
+        size_t _id, 
+        const nlohmann::json& perception_msgs, 
+        const ConstantHeadingVehicle& ego_current_state);
+    
+    void publishMsg(const autoware_planning_msgs::msg::Trajectory& msg);
 
     PlanningTrajectory toPlanningTrajectoryObj(const autoware_planning_msgs::msg::Trajectory& trajectory_msg, 
         const nlohmann::json& estimated_kinematic, const nlohmann::json& ego_shape);
 
 private:
+    rclcpp::Publisher<autoware_planning_msgs::msg::Trajectory>::SharedPtr verified_trajectory_publisher_;
+    rclcpp::Publisher<autoware_planning_msgs::msg::Trajectory>::SharedPtr verified_motion_velocity_publisher_;
     float speed_threshold_activation_;
     float min_acc_;
     float min_jerk_;
+    double last_stop_time_;
+    glm::vec2 stop_point_;
+    bool has_stop_point_ = false;
     nlohmann::json ego_shape_; // cached ego shape
     std::vector<std::string> propositions_;
     spot::parsed_formula spec_formula_;

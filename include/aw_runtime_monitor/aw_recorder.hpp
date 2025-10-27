@@ -29,7 +29,9 @@ private:
     nlohmann::json recorded_data_;
     std::vector<std::shared_ptr<Topic>> topics_;
     std::vector<rclcpp::GenericSubscription::SharedPtr> subscriptions_;  // Store subscriptions to keep them alive
-    
+    rclcpp::Publisher<autoware_planning_msgs::msg::Trajectory>::SharedPtr verified_trajectory_publisher_;
+    rclcpp::Publisher<autoware_planning_msgs::msg::Trajectory>::SharedPtr verified_motion_velocity_publisher_;
+
     // Unified callback for all subscriptions
     void unifiedCallback(const std::shared_ptr<rclcpp::SerializedMessage> msg, 
                         const std::shared_ptr<Topic> topic);

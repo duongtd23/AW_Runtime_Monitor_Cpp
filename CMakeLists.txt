@@ -30,6 +30,7 @@ add_executable(monitor
   src/planning/planning_trajectory.cpp
   src/planning/planning_shield.cpp
   src/planning/scenario_planning_trajectory.cpp
+  src/planning/trajectory_manipulation.cpp
   src/groundtruth/groundtruth_kinematic.cpp
   src/groundtruth/groundtruth_size.cpp
   src/localization/estimated_kinematic.cpp

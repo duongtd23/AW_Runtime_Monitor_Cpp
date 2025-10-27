@@ -16,8 +16,19 @@ AWRecorder::AWRecorder(std::vector<std::shared_ptr<Topic>> topics)
     std::string spec_syntax_file_path;
     this->get_parameter("safety_formula", safety_formula_);
     this->get_parameter("spec_syntax_file_path", spec_syntax_file_path);
+    
+    rclcpp::QoS qos(rclcpp::KeepLast(1));
+    qos.reliability(rclcpp::ReliabilityPolicy::Reliable);
 
-    this->plan_shield_ = PlanningShield(safety_formula_, spec_syntax_file_path);
+    verified_trajectory_publisher_ =
+        this->create_publisher<autoware_planning_msgs::msg::Trajectory>(PLTR_TOPIC_NAME, qos);
+    verified_motion_velocity_publisher_ =
+        this->create_publisher<autoware_planning_msgs::msg::Trajectory>(SCENARIO_PLTR_TOPIC_NAME, qos);
+
+    this->plan_shield_ = PlanningShield(
+            verified_trajectory_publisher_,
+            verified_motion_velocity_publisher_,
+            safety_formula_, spec_syntax_file_path);
     this->recorded_data_[PlanningTrajectoryTopic::TRACE_KEY()] = nlohmann::json::array();
     this->recorded_data_[EstimatedKinematicTopic::TRACE_KEY()] = nlohmann::json::array();
     this->recorded_data_[PerceptionObjectTopic::TRACE_KEY()] = nlohmann::json::array();
@@ -58,8 +69,8 @@ void AWRecorder::save_data(const std::shared_ptr<Topic> topic, const std::shared
     } 
     else if (topic->topic_name == ESTIMATED_KIN_TOPIC_NAME) {
         this->recorded_data_[EstimatedKinematicTopic::TRACE_KEY()].emplace_back(json_data);
-    } else if (topic->topic_name == PLTR_TOPIC_NAME) {
-        this->recorded_data_[PlanningTrajectoryTopic::TRACE_KEY()].emplace_back(json_data);
+    } else if (topic->topic_name == PLTR_UNVERIFIED_TOPIC_NAME) {
+        this->recorded_data_[UnverifiedPlanningTrajectoryTopic::TRACE_KEY()].emplace_back(json_data);
     } else if (topic->topic_name == PREDICTED_OBJ_TOPIC_NAME) {
         this->recorded_data_[PerceptionObjectTopic::TRACE_KEY()].emplace_back(json_data);
     }
@@ -69,16 +80,21 @@ void AWRecorder::unifiedCallback(const std::shared_ptr<rclcpp::SerializedMessage
                                 const std::shared_ptr<Topic> topic) {
     this->save_data(topic, msg);
 
-    if (topic->topic_name == PLTR_TOPIC_NAME) {
+    if (topic->topic_name == PLTR_UNVERIFIED_TOPIC_NAME) {
         autoware_planning_msgs::msg::Trajectory trajectory_msg;
         rclcpp::Serialization<autoware_planning_msgs::msg::Trajectory> serializer;
         rclcpp::SerializedMessage extracted_serialized_msg(*msg);
         serializer.deserialize_message(&extracted_serialized_msg, &trajectory_msg);
 
-        bool safe = this->plan_shield_.verify(trajectory_msg, this->recorded_data_);
-        if (!safe) {
-            RCLCPP_ERROR(this->get_logger(), "Planning trajectory violated safety constraints!");
-        }
+        this->plan_shield_.intervene(trajectory_msg, this->recorded_data_);
+    }
+    else if (topic->topic_name == SCENARIO_PLTR_UNVERIFIED_TOPIC_NAME) {
+        autoware_planning_msgs::msg::Trajectory trajectory_msg;
+        rclcpp::Serialization<autoware_planning_msgs::msg::Trajectory> serializer;
+        rclcpp::SerializedMessage extracted_serialized_msg(*msg);
+        serializer.deserialize_message(&extracted_serialized_msg, &trajectory_msg);
+
+        this->plan_shield_.interveneMotionVelocityMsg(trajectory_msg);
     }
 }
 
