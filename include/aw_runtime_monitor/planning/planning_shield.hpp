@@ -108,6 +108,9 @@ public:
     PlanningTrajectory toPlanningTrajectoryObj(const autoware_planning_msgs::msg::Trajectory& trajectory_msg, 
         const nlohmann::json& estimated_kinematic, const nlohmann::json& ego_shape);
 
+    // for statistics
+    std::vector<double> verification_times_; // in milliseconds
+
 private:
     rclcpp::Publisher<autoware_planning_msgs::msg::Trajectory>::SharedPtr verified_trajectory_publisher_;
     rclcpp::Publisher<autoware_planning_msgs::msg::Trajectory>::SharedPtr verified_motion_velocity_publisher_;

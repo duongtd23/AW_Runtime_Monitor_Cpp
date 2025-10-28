@@ -1,6 +1,5 @@
 #include <string>
 #include "aw_runtime_monitor/planning/planning_trajectory.hpp"
-#include "aw_runtime_monitor/aw_recorder.hpp"
 #include "autoware_planning_msgs/msg/trajectory.hpp"
 #include "nlohmann/json.hpp" // For JSON functionality
 #include "rclcpp/serialization.hpp"

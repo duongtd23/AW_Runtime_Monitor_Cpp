@@ -442,8 +442,7 @@ void PlanningShield::intervene(const autoware_planning_msgs::msg::Trajectory& pl
             this->verified_trajectory_publisher_->publish(new_trajectory_msg);
 
             auto end_time =  std::chrono::high_resolution_clock::now();
-            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
-            std::cout << "Time: " << duration << " ms" << std::endl;
+            verification_times_.push_back(std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count());
 
             // validate in the last planning point, the vehicle's speed is 0
             if (std::abs(new_trajectory_points.back().longitudinal_velocity_mps) > 1e-4) {
@@ -764,20 +763,5 @@ bool PlanningShield::evaluateSpec(const std::vector<float>& time_series,
     spot::formula f = spot::formula::Not(this->spec_formula_.f);
     spot::twa_graph_ptr af = spot::translator(dict).run(f);
 
-    bool result = !k->intersecting_run(af);
-
-    // bool verified = true;
-    // for (size_t i = 0; i < time_series.size(); ++i) {
-    //     if (time_series[i] > 3.0) {
-    //         break;
-    //     }
-    //     if (collision_series[i] && path_confidence >= 0.1) {
-    //         verified = false;
-    //         break;
-    //     }
-    // }
-    // if (result != verified) {
-    //     std::cout << "[ERROR] Spot verification result inconsistent with direct evaluation!" << std::endl;
-    // }
-    return result;
+    return !k->intersecting_run(af);
 }

@@ -10,13 +10,19 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(autoware_perception_msgs REQUIRED)
 find_package(autoware_planning_msgs REQUIRED)
 find_package(autoware_control_msgs REQUIRED)
 find_package(autoware_adapi_v1_msgs REQUIRED)
+find_package(autoware_vehicle_msgs REQUIRED)
 find_package(aw_monitor REQUIRED)
+find_package(cv_bridge REQUIRED)
+find_package(image_transport REQUIRED)
+find_package(OpenCV REQUIRED)
+
 
 include_directories(include
   /usr/local/include
@@ -46,13 +52,18 @@ ament_target_dependencies(monitor
   rclcpp
   std_msgs
   geometry_msgs
+  sensor_msgs
   tf2
   tf2_geometry_msgs
   autoware_perception_msgs
   autoware_planning_msgs
   autoware_control_msgs
   autoware_adapi_v1_msgs
+  autoware_vehicle_msgs
   aw_monitor
+  cv_bridge
+  image_transport
+  OpenCV
 )
 
 target_link_libraries(monitor
