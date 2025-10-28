@@ -114,7 +114,7 @@ private:
     float speed_threshold_activation_;
     float min_acc_;
     float min_jerk_;
-    double last_stop_time_;
+    double last_stop_time_=1e20;
     glm::vec2 stop_point_;
     bool has_stop_point_ = false;
     nlohmann::json ego_shape_; // cached ego shape

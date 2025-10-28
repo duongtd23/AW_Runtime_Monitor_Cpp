@@ -35,6 +35,8 @@ add_executable(monitor
   src/groundtruth/groundtruth_size.cpp
   src/localization/estimated_kinematic.cpp
   src/perception/perception_object.cpp
+  src/control/control_command.cpp
+  src/metadata/awsim_metadata.cpp
   src/recorder/aw_recorder.cpp
   src/monitor.cpp
   src/utils.cpp

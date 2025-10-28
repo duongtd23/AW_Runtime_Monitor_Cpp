@@ -30,8 +30,10 @@ AWRecorder::AWRecorder(std::vector<std::shared_ptr<Topic>> topics)
             verified_motion_velocity_publisher_,
             safety_formula_, spec_syntax_file_path);
     this->recorded_data_[PlanningTrajectoryTopic::TRACE_KEY()] = nlohmann::json::array();
+    this->recorded_data_[UnverifiedPlanningTrajectoryTopic::TRACE_KEY()] = nlohmann::json::array();
     this->recorded_data_[EstimatedKinematicTopic::TRACE_KEY()] = nlohmann::json::array();
     this->recorded_data_[PerceptionObjectTopic::TRACE_KEY()] = nlohmann::json::array();
+    this->recorded_data_[GroundtruthKinematicTopic::TRACE_KEY()] = nlohmann::json::array();
     // to check if spot exists
     // std::cout << "Hello world!\nThis is Spot " << spot::version() << ".\n";
 }
@@ -60,17 +62,18 @@ void AWRecorder::save_data(const std::shared_ptr<Topic> topic, const std::shared
     // This will call the correct implementation based on the actual topic type (polymorphism)
     nlohmann::json json_data = topic->msgToJson(msg);
 
-    // std::cout << json_data.dump(2) << std::endl;
-
     if (topic->topic_name == GROUNDTRUTH_SIZE_TOPIC_NAME) {
-        // if (!this->recorded_data_.contains(GroundtruthSizeTopic::TRACE_KEY())) {
         this->recorded_data_[GroundtruthSizeTopic::TRACE_KEY()] = json_data;
-        // }
-    } 
-    else if (topic->topic_name == ESTIMATED_KIN_TOPIC_NAME) {
+    } else if (topic->topic_name == AWSIM_METADATA_TOPIC_NAME) {
+        this->recorded_data_[AWSIMMetadata::TRACE_KEY()] = json_data;
+    } else if (topic->topic_name == GROUNDTRUTH_KINEMATIC_TOPIC_NAME) {
+        this->recorded_data_[GroundtruthKinematicTopic::TRACE_KEY()].emplace_back(json_data);
+    } else if (topic->topic_name == ESTIMATED_KIN_TOPIC_NAME) {
         this->recorded_data_[EstimatedKinematicTopic::TRACE_KEY()].emplace_back(json_data);
     } else if (topic->topic_name == PLTR_UNVERIFIED_TOPIC_NAME) {
         this->recorded_data_[UnverifiedPlanningTrajectoryTopic::TRACE_KEY()].emplace_back(json_data);
+    } else if (topic->topic_name == PLTR_TOPIC_NAME) {
+        this->recorded_data_[PlanningTrajectoryTopic::TRACE_KEY()].emplace_back(json_data);
     } else if (topic->topic_name == PREDICTED_OBJ_TOPIC_NAME) {
         this->recorded_data_[PerceptionObjectTopic::TRACE_KEY()].emplace_back(json_data);
     }

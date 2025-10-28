@@ -3,6 +3,7 @@
 #include "aw_runtime_monitor/planning/scenario_planning_trajectory.hpp"
 #include "aw_runtime_monitor/planning/planning_trajectory.hpp"
 #include "aw_runtime_monitor/groundtruth/groundtruth_size.hpp"
+#include "aw_runtime_monitor/groundtruth/groundtruth_kinematic.hpp"
 #include "aw_runtime_monitor/localization/estimated_kinematic.hpp"
 #include "aw_runtime_monitor/perception/perception_object.hpp"
 
@@ -36,11 +37,14 @@ int main(int argc, char ** argv)
 
     // Create topics
     std::vector<std::shared_ptr<Topic>> topics;
+    topics.push_back(std::make_shared<AWSIMMetadata>());
     topics.push_back(std::make_shared<PerceptionObjectTopic>());
     topics.push_back(std::make_shared<EstimatedKinematicTopic>());
     topics.push_back(std::make_shared<UnverifiedPlanningTrajectoryTopic>());
+    topics.push_back(std::make_shared<PlanningTrajectoryTopic>());
     topics.push_back(std::make_shared<UnverifiedScenarioPlanningTrajectoryTopic>());
     topics.push_back(std::make_shared<GroundtruthSizeTopic>());
+    topics.push_back(std::make_shared<GroundtruthKinematicTopic>());
 
     auto recorder = std::make_shared<AWRecorder>(topics);
     AWRuntimeMonitor monitor(recorder);
