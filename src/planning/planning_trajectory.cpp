@@ -35,7 +35,7 @@ nlohmann::json planningMsgToJson(const std::shared_ptr<rclcpp::SerializedMessage
 }
 
 PlanningTrajectoryTopic::PlanningTrajectoryTopic() 
-        : Topic(PLTR_TOPIC_NAME, PLTR_MSG_TYPE_STR, false) {
+        : Topic(PLTR_TOPIC_NAME, PLTR_MSG_TYPE_STR) {
 }
 std::string PlanningTrajectoryTopic::traceKey() {
     return PlanningTrajectoryTopic::TRACE_KEY();
@@ -46,7 +46,7 @@ nlohmann::json PlanningTrajectoryTopic::msgToJson(const std::shared_ptr<rclcpp::
 }
 
 UnverifiedPlanningTrajectoryTopic::UnverifiedPlanningTrajectoryTopic() 
-        : Topic(PLTR_UNVERIFIED_TOPIC_NAME, PLTR_MSG_TYPE_STR, false) {
+        : Topic(PLTR_UNVERIFIED_TOPIC_NAME, PLTR_MSG_TYPE_STR) {
 }
 std::string UnverifiedPlanningTrajectoryTopic::traceKey() {
     return UnverifiedPlanningTrajectoryTopic::TRACE_KEY();

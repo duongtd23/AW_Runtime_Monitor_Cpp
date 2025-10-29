@@ -4,7 +4,7 @@
 #include "rclcpp/serialization.hpp"
 
 ControlCommandTopic::ControlCommandTopic() 
-        : Topic(CONTROL_COMMAND_TOPIC_NAME, CONTROL_COMMAND_MSG_TYPE_STR, false) {
+        : Topic(CONTROL_COMMAND_TOPIC_NAME, CONTROL_COMMAND_MSG_TYPE_STR) {
 }
 
 std::string ControlCommandTopic::traceKey() {

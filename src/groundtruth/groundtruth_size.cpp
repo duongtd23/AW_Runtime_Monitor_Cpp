@@ -5,7 +5,7 @@
 #include "aw_runtime_monitor/utils.hpp"
 
 GroundtruthSizeTopic::GroundtruthSizeTopic() 
-        : Topic(GROUNDTRUTH_SIZE_TOPIC_NAME, GROUNDTRUTH_SIZE_MSG_TYPE_STR, false) {
+        : Topic(GROUNDTRUTH_SIZE_TOPIC_NAME, GROUNDTRUTH_SIZE_MSG_TYPE_STR) {
 }
 std::string GroundtruthSizeTopic::traceKey() {
     return GroundtruthSizeTopic::TRACE_KEY();

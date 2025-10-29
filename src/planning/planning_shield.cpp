@@ -92,7 +92,7 @@ std::tuple<std::vector<glm::vec2>, std::vector<float>, std::vector<float>> getPo
 }
 
 float deriveTimeStep(const glm::vec2& position0, float speed0, float accel0, 
-                        const glm::vec2& position1, float speed1, float accel1){
+                    const glm::vec2& position1, float speed1, float accel1){
     if (accel0 + accel1 == 0.0) {
         if (speed0 + speed1 == 0.0) {
             return 0.0;

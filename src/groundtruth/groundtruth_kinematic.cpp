@@ -5,7 +5,7 @@
 #include "aw_runtime_monitor/utils.hpp"
 
 GroundtruthKinematicTopic::GroundtruthKinematicTopic() 
-        : Topic(GROUNDTRUTH_KINEMATIC_TOPIC_NAME, GROUNDTRUTH_KINEMATIC_MSG_TYPE_STR, false) {
+        : Topic(GROUNDTRUTH_KINEMATIC_TOPIC_NAME, GROUNDTRUTH_KINEMATIC_MSG_TYPE_STR) {
 }
 std::string GroundtruthKinematicTopic::traceKey() {
     return GroundtruthKinematicTopic::TRACE_KEY();

@@ -4,7 +4,7 @@
 #include "rclcpp/serialization.hpp"
 
 EstimatedKinematicTopic::EstimatedKinematicTopic() 
-        : Topic(ESTIMATED_KIN_TOPIC_NAME, ESTIMATED_KIN_MSG_TYPE_STR, false) {
+        : Topic(ESTIMATED_KIN_TOPIC_NAME, ESTIMATED_KIN_MSG_TYPE_STR) {
 }
 
 std::string EstimatedKinematicTopic::traceKey() {

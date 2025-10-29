@@ -11,7 +11,7 @@ const std::string CAMERA_FOOTAGE_MSG_TYPE_STR = "sensor_msgs/msg/Image";
 class CameraFootageTopic : public Topic 
 {
 public:
-    CameraFootageTopic() : Topic(CAMERA_FOOTAGE_TOPIC_NAME, CAMERA_FOOTAGE_MSG_TYPE_STR, false) {}
+    CameraFootageTopic() : Topic(CAMERA_FOOTAGE_TOPIC_NAME, CAMERA_FOOTAGE_MSG_TYPE_STR) {}
 
     // dummy values since never used
     std::string traceKey() override { return ""; }

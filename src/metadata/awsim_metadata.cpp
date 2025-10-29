@@ -4,7 +4,7 @@
 #include "rclcpp/serialization.hpp"
 
 AWSIMMetadata::AWSIMMetadata() 
-        : Topic(AWSIM_METADATA_TOPIC_NAME, AWSIM_METADATA_MSG_TYPE_STR, false) {
+        : Topic(AWSIM_METADATA_TOPIC_NAME, AWSIM_METADATA_MSG_TYPE_STR) {
 }
 
 std::string AWSIMMetadata::traceKey() {

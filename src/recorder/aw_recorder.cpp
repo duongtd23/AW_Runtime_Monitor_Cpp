@@ -10,18 +10,73 @@ const std::string SAFETY_FORMULA = "[] (pathConfidence >= 0.1 /\\ time <= 3.0 ->
 const std::string SPEC_SYNTAX_FILE_PATH = "formal_spec/syntax.maude";
 const std::string TRACE_FILE_PATH = "recorded_data";
 
-AWRecorder::AWRecorder(std::vector<std::shared_ptr<Topic>> topics) 
-        : Node("aw_recorder"), topics_(topics) {
-
-    this->declare_parameter<std::string>("safety_formula", SAFETY_FORMULA);
-    this->declare_parameter<std::string>("spec_syntax_file_path", SPEC_SYNTAX_FILE_PATH);
-    this->declare_parameter<std::string>("trace_file_path", TRACE_FILE_PATH);
-    std::string safety_formula_, spec_syntax_file_path, trace_file_path_;
-    this->get_parameter("safety_formula", safety_formula_);
-    this->get_parameter("spec_syntax_file_path", spec_syntax_file_path);
-    this->get_parameter("trace_file_path", trace_file_path_);
-    this->output_path_ = trace_file_path_;
+AWRecorder::AWRecorder() 
+        : Node("aw_recorder") {
     
+    std::string safety_formula, spec_syntax_file_path;
+    this->declare_parameter<bool>("planning_shield_enabled", false);
+    this->declare_parameter<std::string>("spec_syntax_file_path", SPEC_SYNTAX_FILE_PATH);
+    this->declare_parameter<std::string>("safety_formula", SAFETY_FORMULA);
+    this->declare_parameter<std::string>("output_path", TRACE_FILE_PATH);
+    this->declare_parameter<std::vector<std::string>>("topics", topic_names_);
+
+    this->get_parameter("planning_shield_enabled", planning_shield_enabled_);
+    this->get_parameter("spec_syntax_file_path", spec_syntax_file_path);
+    this->get_parameter("safety_formula", safety_formula);
+    this->get_parameter("output_path", output_path_);
+    this->get_parameter("topics", topic_names_);
+    for (const auto& name : topic_names_) {
+        if (name == "ControlCommand") {
+            topics_.push_back(std::make_shared<ControlCommandTopic>());
+        } else if (name == "GroundtruthKinematic") {
+            topics_.push_back(std::make_shared<GroundtruthKinematicTopic>());
+        } else if (name == "GroundtruthSize") {
+            topics_.push_back(std::make_shared<GroundtruthSizeTopic>());
+        } else if (name == "EstimatedKinematic") {
+            topics_.push_back(std::make_shared<EstimatedKinematicTopic>());
+        } else if (name == "AWSIMMetadata") {
+            topics_.push_back(std::make_shared<AWSIMMetadata>());
+        } else if (name == "PerceptionObject") {
+            topics_.push_back(std::make_shared<PerceptionObjectTopic>());
+        } else if (name == "PlanningTrajectory") {
+            topics_.push_back(std::make_shared<PlanningTrajectoryTopic>());
+        } else if (name == "UnverifiedPlanningTrajectory") {
+            if (planning_shield_enabled_) {
+                topics_.push_back(std::make_shared<UnverifiedPlanningTrajectoryTopic>());
+            } else {
+                RCLCPP_WARN(this->get_logger(), "Planning shield is disabled, skip UnverifiedPlanningTrajectory topic.");
+            }
+        } else if (name == "UnverifiedScenarioPlanningTrajectory") {
+            if (planning_shield_enabled_) {
+                auto topic = std::make_shared<UnverifiedScenarioPlanningTrajectoryTopic>();
+                topic->save_data = true;
+                topics_.push_back(topic);
+            } else {
+                RCLCPP_WARN(this->get_logger(), "Planning shield is disabled, skip UnverifiedScenarioPlanningTrajectory topic.");
+            }
+        } else if (name == "CameraFootage") {
+            topics_.push_back(std::make_shared<CameraFootageTopic>());
+        } else {
+            RCLCPP_ERROR(this->get_logger(), "Unknown topic name: %s", name.c_str());
+        }
+    }
+    // if planning shield is enabled, add necessary topics
+    if (planning_shield_enabled_) {
+        if (std::find(topic_names_.begin(), topic_names_.end(), "UnverifiedPlanningTrajectory") == topic_names_.end()) {
+            auto topic = std::make_shared<UnverifiedPlanningTrajectoryTopic>();
+            topic->save_data = false;
+            topics_.push_back(topic);
+        }
+        if (std::find(topic_names_.begin(), topic_names_.end(), "UnverifiedScenarioPlanningTrajectory") == topic_names_.end()) {
+            auto topic = std::make_shared<UnverifiedScenarioPlanningTrajectoryTopic>();
+            topic->save_data = false;
+            topics_.push_back(topic);
+        }
+    }
+    // for tracking autonomous driving state, e.g., starting moving, goal arrived
+    topics_.push_back(std::make_shared<OperationModeTrackerTopic>());
+    topics_.push_back(std::make_shared<RouteStateTrackerTopic>());
+
     rclcpp::QoS qos(rclcpp::KeepLast(1));
     qos.reliability(rclcpp::ReliabilityPolicy::Reliable);
 
@@ -30,10 +85,12 @@ AWRecorder::AWRecorder(std::vector<std::shared_ptr<Topic>> topics)
     verified_motion_velocity_publisher_ =
         this->create_publisher<autoware_planning_msgs::msg::Trajectory>(SCENARIO_PLTR_TOPIC_NAME, qos);
 
-    this->plan_shield_ = PlanningShield(
+    if (planning_shield_enabled_) {
+        this->planning_shield_ = PlanningShield(
             verified_trajectory_publisher_,
             verified_motion_velocity_publisher_,
-            safety_formula_, spec_syntax_file_path);
+            safety_formula, spec_syntax_file_path);
+    }
     this->reset();
 
     // to check if spot exists
@@ -42,7 +99,8 @@ AWRecorder::AWRecorder(std::vector<std::shared_ptr<Topic>> topics)
 
 void AWRecorder::reset() {
     this->is_recording_ = false;
-    this->plan_shield_.verification_times_.clear();
+    if (planning_shield_enabled_)
+        this->planning_shield_.verification_times_.clear();
     this->no_sim_++;
 
     for (auto topic : topics_) {
@@ -50,8 +108,12 @@ void AWRecorder::reset() {
             topic->topic_name == ESTIMATED_KIN_TOPIC_NAME ||
             topic->topic_name == PLTR_UNVERIFIED_TOPIC_NAME ||
             topic->topic_name == PLTR_TOPIC_NAME ||
-            topic->topic_name == PREDICTED_OBJ_TOPIC_NAME) {
-          this->recorded_data_[topic->traceKey()] = nlohmann::json::array();
+            topic->topic_name == PREDICTED_OBJ_TOPIC_NAME ||
+            topic->topic_name == CONTROL_COMMAND_TOPIC_NAME ||
+            topic->topic_name == SCENARIO_PLTR_TOPIC_NAME ||
+            topic->topic_name == SCENARIO_PLTR_UNVERIFIED_TOPIC_NAME) {
+                if (topic->save_data)
+                  this->recorded_data_[topic->traceKey()] = nlohmann::json::array();
         } 
         else if (topic->topic_name == GROUNDTRUTH_SIZE_TOPIC_NAME ||
                 topic->topic_name == AWSIM_METADATA_TOPIC_NAME) {
@@ -103,14 +165,19 @@ void AWRecorder::save_data(const std::shared_ptr<Topic> topic, const std::shared
 
     if (topic->topic_name == GROUNDTRUTH_SIZE_TOPIC_NAME ||
         topic->topic_name == AWSIM_METADATA_TOPIC_NAME) {
-        this->recorded_data_[topic->traceKey()] = json_data;
+            if (topic->save_data)
+                this->recorded_data_[topic->traceKey()] = json_data;
     } 
     else if (topic->topic_name == GROUNDTRUTH_KINEMATIC_TOPIC_NAME ||
             topic->topic_name == ESTIMATED_KIN_TOPIC_NAME ||
-            topic->topic_name == PLTR_UNVERIFIED_TOPIC_NAME ||
             topic->topic_name == PLTR_TOPIC_NAME ||
-            topic->topic_name == PREDICTED_OBJ_TOPIC_NAME) {
-        this->recorded_data_[topic->traceKey()].emplace_back(json_data);
+            topic->topic_name == PREDICTED_OBJ_TOPIC_NAME ||
+            topic->topic_name == CONTROL_COMMAND_TOPIC_NAME ||
+            topic->topic_name == SCENARIO_PLTR_TOPIC_NAME ||
+            topic->topic_name == PLTR_UNVERIFIED_TOPIC_NAME ||
+            topic->topic_name == SCENARIO_PLTR_UNVERIFIED_TOPIC_NAME) {
+                if (topic->save_data)
+                    this->recorded_data_[topic->traceKey()].emplace_back(json_data);
     }
 }
 
@@ -123,8 +190,11 @@ void AWRecorder::unifiedCallback(const std::shared_ptr<rclcpp::SerializedMessage
         rclcpp::Serialization<autoware_planning_msgs::msg::Trajectory> serializer;
         rclcpp::SerializedMessage extracted_serialized_msg(*msg);
         serializer.deserialize_message(&extracted_serialized_msg, &trajectory_msg);
-
-        this->plan_shield_.intervene(trajectory_msg, this->recorded_data_);
+        if (planning_shield_enabled_) {
+            this->planning_shield_.intervene(trajectory_msg, this->recorded_data_);
+        } else {
+            this->verified_trajectory_publisher_->publish(trajectory_msg);
+        }
     }
     else if (topic->topic_name == SCENARIO_PLTR_UNVERIFIED_TOPIC_NAME) {
         autoware_planning_msgs::msg::Trajectory trajectory_msg;
@@ -132,7 +202,11 @@ void AWRecorder::unifiedCallback(const std::shared_ptr<rclcpp::SerializedMessage
         rclcpp::SerializedMessage extracted_serialized_msg(*msg);
         serializer.deserialize_message(&extracted_serialized_msg, &trajectory_msg);
 
-        this->plan_shield_.interveneMotionVelocityMsg(trajectory_msg);
+        if (planning_shield_enabled_) {
+            this->planning_shield_.interveneMotionVelocityMsg(trajectory_msg);
+        } else {
+            this->verified_motion_velocity_publisher_->publish(trajectory_msg);
+        }
     }
     else if (topic->topic_name == OP_MODE_TOPIC_NAME) {
         autoware_vehicle_msgs::msg::Engage engage_msg;
@@ -186,11 +260,13 @@ void AWRecorder::stopRecording() {
     // this->recorded_data_.clear();
     // this->frames_.clear();
 
-    std::cout << "Verification times (ms): ";
-    for (const auto& time : this->plan_shield_.verification_times_) {
-        std::cout << time << " ";
+    if (planning_shield_enabled_) {
+        std::cout << "Verification times (ms): ";
+        for (const auto& time : this->planning_shield_.verification_times_) {
+            std::cout << time << " ";
+        }
+        std::cout << std::endl;
     }
-    std::cout << std::endl;
     this->reset();
 }
 

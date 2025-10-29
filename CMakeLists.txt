@@ -70,6 +70,14 @@ target_link_libraries(monitor
   spot
   bddx
 )
+install(
+  DIRECTORY config
+  DESTINATION share/${PROJECT_NAME}/
+)
+install(
+  DIRECTORY launch
+  DESTINATION share/${PROJECT_NAME}/
+)
 install(TARGETS
   monitor
   DESTINATION lib/${PROJECT_NAME}

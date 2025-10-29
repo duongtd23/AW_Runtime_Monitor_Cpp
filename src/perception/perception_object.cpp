@@ -8,7 +8,7 @@ const unsigned char SHAPE_CYLINDER = 1;
 const unsigned char SHAPE_POLYGON = 2;
 
 PerceptionObjectTopic::PerceptionObjectTopic() 
-        : Topic(PREDICTED_OBJ_TOPIC_NAME, PREDICTED_OBJ_MSG_TYPE_STR, false) {
+        : Topic(PREDICTED_OBJ_TOPIC_NAME, PREDICTED_OBJ_MSG_TYPE_STR) {
 }
 
 std::string PerceptionObjectTopic::traceKey() {
