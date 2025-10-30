@@ -46,7 +46,7 @@ private:
     rclcpp::Publisher<autoware_planning_msgs::msg::Trajectory>::SharedPtr verified_motion_velocity_publisher_;
 
     bool is_recording_ = false;
-    size_t no_sim_ = 0;
+    size_t no_sim_ = 1;
 
     // Unified callback for all subscriptions
     void unifiedCallback(const std::shared_ptr<rclcpp::SerializedMessage> msg, 

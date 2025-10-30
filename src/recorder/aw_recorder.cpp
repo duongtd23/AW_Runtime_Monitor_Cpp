@@ -15,12 +15,14 @@ AWRecorder::AWRecorder()
     
     std::string safety_formula, spec_syntax_file_path;
     this->declare_parameter<bool>("planning_shield_enabled", false);
+    this->declare_parameter<int>("no_sim", 1);
     this->declare_parameter<std::string>("spec_syntax_file_path", SPEC_SYNTAX_FILE_PATH);
     this->declare_parameter<std::string>("safety_formula", SAFETY_FORMULA);
     this->declare_parameter<std::string>("output_path", TRACE_FILE_PATH);
     this->declare_parameter<std::vector<std::string>>("topics", topic_names_);
 
     this->get_parameter("planning_shield_enabled", planning_shield_enabled_);
+    this->get_parameter("no_sim", no_sim_);
     this->get_parameter("spec_syntax_file_path", spec_syntax_file_path);
     this->get_parameter("safety_formula", safety_formula);
     this->get_parameter("output_path", output_path_);
@@ -101,7 +103,6 @@ void AWRecorder::reset() {
     this->is_recording_ = false;
     if (planning_shield_enabled_)
         this->planning_shield_.verification_times_.clear();
-    this->no_sim_++;
 
     for (auto topic : topics_) {
         if (topic->topic_name == GROUNDTRUTH_KINEMATIC_TOPIC_NAME ||
@@ -268,6 +269,7 @@ void AWRecorder::stopRecording() {
         std::cout << std::endl;
     }
     this->reset();
+    this->no_sim_++;
 }
 
 void AWRecorder::dumpDataToFile(const std::string& output_path) {

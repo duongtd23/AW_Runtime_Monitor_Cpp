@@ -125,6 +125,22 @@ private:
     spot::parsed_formula spec_formula_;
     std::map<std::string, ComparisonFunction> proposition_map_;
     std::string spec_syntax_file_path_;
+    std::vector<bool> last_safety_evaluation_;
+
+    void insertSafetyEvaluation(bool is_safe) {
+        last_safety_evaluation_.push_back(is_safe);
+        if (last_safety_evaluation_.size() > 5) {
+            last_safety_evaluation_.erase(last_safety_evaluation_.begin());
+        }
+    }
+    bool isRecentlyAllUnsafe() {
+        for (const auto& val : last_safety_evaluation_) {
+            if (val) {
+                return false;
+            }
+        }
+        return true;
+    }
 };
 
 #endif

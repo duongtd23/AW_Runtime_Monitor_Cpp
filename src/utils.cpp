@@ -112,8 +112,10 @@ glm::vec2 jsonPointToVector2(const nlohmann::json& dict_point) {
 }
 
 // Return the center point of the vehicle in world coordinates.
+// heading_angle_degree in counter-clockwise degree
 glm::vec2 getCenterRect(const glm::vec2& position, double heading_angle_degree, const glm::vec2& center_offset) {
-    double theta = glm::radians(heading_angle_degree);
+    // need to change sign because of different convention
+    double theta = -glm::radians(heading_angle_degree);
     glm::mat2 rot(cos(theta), -sin(theta),
              sin(theta),  cos(theta));
     return position + rot * center_offset;
@@ -124,21 +126,22 @@ std::vector<glm::vec2> getEgoWorldVertices(const glm::vec2& position,
                                          const glm::vec2& size,          // (length, width)
                                          const glm::vec2& center_offset) // (x, y)
 {
-    double width = size.y;
     double length = size.x;
-    double dx = width / 2.0;
-    double dy = length / 2.0;
+    double width = size.y;
+    double dx = length / 2.0;
+    double dy = width / 2.0;
 
     // Local rectangle corners (FR, FL, RL, RR)
     std::vector<glm::vec2> local_vertices = {
-        { dx,  dy},  // front-right
-        {-dx,  dy},  // front-left
-        {-dx, -dy},  // rear-left
-        { dx, -dy}   // rear-right
+        { dx,  dy},
+        { dx, -dy},
+        {-dx, -dy},
+        {-dx,  dy} 
     };
 
     // Rotation matrix (counter-clockwise)
-    double theta = glm::radians(heading_angle_degree);
+    // remember to change sign due to different convention
+    double theta = -glm::radians(heading_angle_degree);
     glm::mat2 rot(cos(theta), -sin(theta),
              sin(theta),  cos(theta));
 
@@ -157,7 +160,8 @@ std::vector<glm::vec2> getEgoWorldVertices(const glm::vec2& position,
 }
 
 std::vector<glm::vec2> getObjectWorldVertices(const glm::vec2& position, float heading_angle_degree, const std::vector<glm::vec2>& local_vertices) {
-    float theta = glm::radians(heading_angle_degree);
+    // remember to change sign due to different convention
+    float theta = -glm::radians(heading_angle_degree);
     glm::mat2 rot(cos(theta), -sin(theta),
                   sin(theta),  cos(theta));
     std::vector<glm::vec2> world_vertices;

@@ -33,7 +33,8 @@ ConstantHeadingVehicle::ConstantHeadingVehicle(const nlohmann::json& vehicle_cur
     this->init_vertices = (getEgoWorldVertices(this->init_pos, this->init_rot,
                             glm::vec2(veh_length, veh_width),
                             glm::vec2(veh_center_x, veh_center_y)));
-    double heading_rad = glm::radians(this->init_rot);
+    // remember to change sign due to different convention
+    double heading_rad = -glm::radians(this->init_rot);
     this->norm_vel_ = glm::vec2(std::cos(heading_rad), std::sin(heading_rad));
 }
 
@@ -302,6 +303,47 @@ std::vector<autoware_planning_msgs::msg::TrajectoryPoint> mergePoints(
 }
 
 /**
+ * Find the latest perception object with id $object_id.
+ * The returned object must be in the entry with index < $bounded_entry_id
+ */
+std::tuple<nlohmann::json, float> findLatestPerpObj(const nlohmann::json& perception_msgs, 
+        const std::string& object_id, size_t bounded_entry_id) {
+    for (size_t i = bounded_entry_id - 1; i < perception_msgs.size(); --i) {
+        const auto& perp_entry = perception_msgs[i];
+        for (const auto& obj : perp_entry["objects"]) {
+            if (obj["id"] == object_id)
+                return std::make_tuple(obj, perp_entry["timestamp"]);
+        }
+    }
+    return std::make_tuple(nlohmann::json{}, 0.0);
+}
+glm::vec2 correctVelocity(const nlohmann::json& perception_msgs,
+        const glm::vec2& current_pos, float current_time,
+        const std::string& object_id, size_t bounded_entry_id,
+        size_t lookback_steps=2) {
+    glm::vec2 prev_position;
+    float time = 0.0;
+    size_t steps = 0;
+    for (size_t i = bounded_entry_id - 1; i < perception_msgs.size(); --i) {
+        const auto& perp_entry = perception_msgs[i];
+        for (const auto& obj : perp_entry["objects"]) {
+            if (obj["id"] == object_id) {
+                prev_position = jsonPointToVector2(obj["pose"]["position"]);
+                time = perp_entry["timestamp"];
+                steps++;
+            }
+        }
+        if (steps >= lookback_steps) break;
+    }
+
+    float dt = current_time - time;
+    if (steps < lookback_steps || dt >= 0.6f) {
+        return glm::vec2{0.0, 0.0};
+    }
+    return (current_pos - prev_position) / dt;
+}
+
+/**
  * PlanningShield member methods
  */
 PlanningShield::PlanningShield(
@@ -314,11 +356,6 @@ PlanningShield::PlanningShield(
       speed_threshold_activation_(speed_threshold_activation), min_acc_(min_acc),
       min_jerk_(min_jerk), spec_syntax_file_path_(spec_syntax_file_path) {
 
-    auto roots = solveRootPolynomial2(2.0, -3.0, 1.0);
-    std::cout << "Test roots: ";
-    for (const auto& r : roots) {
-        std::cout << r << " ";
-    }
     std::vector<std::string> renamed_spec_props = renameFormula(spec_formula_str, spec_syntax_file_path);
     if (renamed_spec_props.empty()) {
         throw std::runtime_error("Failed to parse the formula.");
@@ -373,13 +410,13 @@ PlanningShield::PlanningShield(
     replaceSubStr(renamed_spec_formula_str, "\\\\", "\\");
 
     std::cout << "Spec formula: " << renamed_spec_formula_str << std::endl;
-    for (const std::string& p : this->propositions_) {
-        std::cout << "Proposition: " << p << std::endl;
-    }
-    std::cout << this->proposition_map_.size() << std::endl;
-    for (const auto& [key, _] : this->proposition_map_) {
-        std::cout << "Mapped proposition: " << key << std::endl;
-    }
+    // for (const std::string& p : this->propositions_) {
+    //     std::cout << "Proposition: " << p << std::endl;
+    // }
+    // std::cout << this->proposition_map_.size() << std::endl;
+    // for (const auto& [key, _] : this->proposition_map_) {
+    //     std::cout << "Mapped proposition: " << key << std::endl;
+    // }
 
     try {
         this->spec_formula_ = spot::parse_infix_psl(renamed_spec_formula_str);
@@ -456,13 +493,14 @@ void PlanningShield::intervene(const autoware_planning_msgs::msg::Trajectory& pl
     if (safe) {
         // if safe, publish the trajectory
         this->verified_trajectory_publisher_->publish(planning_msg);
-        if (current_time >= this->last_stop_time_ + 4.0) {
+        if (this->has_stop_point_ && current_time >= this->last_stop_time_ + 4.0) {
             // reset
             std::cout << "Restart moving..." << std::endl;
             this->has_stop_point_ = false;
             this->last_stop_time_ = 1e20;
         }
     }
+    this->insertSafetyEvaluation(safe);
 }
 
 void PlanningShield::interveneMotionVelocityMsg(const autoware_planning_msgs::msg::Trajectory& trajectory_msg) {
@@ -489,10 +527,10 @@ bool PlanningShield::verify(const PlanningTrajectory& planning_points,
             float length = perceived_obj["shape"]["size"]["x"];
             float width = perceived_obj["shape"]["size"]["y"];
             npc_local_vertices = std::vector<glm::vec2> {
-                glm::vec2(width / 2, length / 2),
-                glm::vec2(-width / 2, length / 2),
-                glm::vec2(-width / 2, -length / 2),
-                glm::vec2(width / 2, -length / 2),
+                glm::vec2(length / 2, width / 2),
+                glm::vec2(-length / 2, width / 2),
+                glm::vec2(-length / 2, -width / 2),
+                glm::vec2(length / 2, -width / 2),
             };
         } else if (perceived_obj["shape"]["type"] == "polygon") {
             for (const auto& point : perceived_obj["shape"]["footprint"]) {
@@ -504,6 +542,27 @@ bool PlanningShield::verify(const PlanningTrajectory& planning_points,
         auto current_vel = jsonPointToVector2(perceived_obj["twist"]["linear"]);
         auto current_position = jsonPointToVector2(current_pose["position"]);
         float existence_prob = perceived_obj["existence_prob"];
+        float current_time = latest_perception_msg["timestamp"];
+        std::string npc_id = perceived_obj["id"];
+
+        glm::vec2 cal_vel = correctVelocity(perception_msgs,
+                                            current_position,
+                                            current_time,
+                                            npc_id,
+                                            perception_msgs.size() - 1,
+                                            1);
+
+        if (cal_vel[0] == 0.0f && cal_vel[1] == 0.0f) {
+            // std::cout << "Does not have enough data to determine velocity for NPC " << std::endl;
+        } else {
+            if (!this->verifySimulatedNpcPath(planning_points,
+                                    existence_prob,
+                                    current_position, current_heading,
+                                    cal_vel, npc_local_vertices)) {
+                return false;
+            }
+        }
+
         if (!this->verifySimulatedNpcPath(planning_points,
                             existence_prob,
                             current_position, current_heading,
@@ -513,13 +572,11 @@ bool PlanningShield::verify(const PlanningTrajectory& planning_points,
 
         for (size_t i = 0; i < perceived_obj["predict_paths"].size(); ++i) {
             const auto& predicted_path = perceived_obj["predict_paths"][i];
-            // if (predicted_path['confidence'] >= 0.1) {
             if (!this->verifyPredictNpcPath(planning_points,
                             existence_prob, predicted_path,
                             current_heading, npc_local_vertices)) {
                 return false;
             }
-            // }
         }
     }
     return true;
@@ -531,7 +588,7 @@ bool PlanningShield::verifySimulatedNpcPath(const PlanningTrajectory& planning_p
                                 float time_bound) {
     /**
      * Assume the NPC keep going with given (current) velocity.
-     * Simulate the path and TODO
+     * Simulate the path and check the safety.
      */
     std::vector<float> time_series;
     std::vector<bool> collision_series;
@@ -569,13 +626,6 @@ bool PlanningShield::verifySimulatedNpcPath(const PlanningTrajectory& planning_p
         collision_series.push_back(isCollision(ego_plan_vertices, npc_vertices));
         distance_series.push_back(glm::length(planning_position - npc_position));
     }
-    // data_series = {
-    //     'time': time_series,
-    //     'collision': collision_series,
-    //     'distance': distance_series,
-    //     'path_confidence': [1.0],
-    //     'existence_prob': [existence_prob],
-    // }
     return this->evaluateSpec(time_series, collision_series, distance_series, existence_prob, 1.0);
 }
 
@@ -641,14 +691,6 @@ bool PlanningShield::verifyPredictNpcPath(const PlanningTrajectory& planning_poi
         collision_series.push_back(isCollision(ego_plan_vertices, npc_vertices));
         distance_series.push_back(glm::length(planning_position - estimated_npc_pos));
     }
-
-    // data_series = {
-    //     'time': time_series,
-    //     'collision': collision_series,
-    //     'distance': distance_series,
-    //     'path_confidence': [predicted_path['confidence']],
-    //     'existence_prob': [existence_prob],
-    // }
     float path_confidence = predicted_path["confidence"];
     return this->evaluateSpec(time_series, collision_series, distance_series, existence_prob, path_confidence);
 }
