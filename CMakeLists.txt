@@ -18,6 +18,7 @@ find_package(autoware_planning_msgs REQUIRED)
 find_package(autoware_control_msgs REQUIRED)
 find_package(autoware_adapi_v1_msgs REQUIRED)
 find_package(autoware_vehicle_msgs REQUIRED)
+find_package(tier4_perception_msgs REQUIRED)
 find_package(aw_monitor REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(image_transport REQUIRED)
@@ -41,6 +42,7 @@ add_executable(monitor
   src/groundtruth/groundtruth_size.cpp
   src/localization/estimated_kinematic.cpp
   src/perception/perception_object.cpp
+  src/perception/boundingbox_perception_object.cpp
   src/control/control_command.cpp
   src/metadata/awsim_metadata.cpp
   src/recorder/aw_recorder.cpp
@@ -60,6 +62,7 @@ ament_target_dependencies(monitor
   autoware_control_msgs
   autoware_adapi_v1_msgs
   autoware_vehicle_msgs
+  tier4_perception_msgs
   aw_monitor
   cv_bridge
   image_transport

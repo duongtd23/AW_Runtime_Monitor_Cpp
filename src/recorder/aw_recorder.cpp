@@ -12,21 +12,53 @@ const std::string TRACE_FILE_PATH = "recorded_data";
 
 AWRecorder::AWRecorder() 
         : Node("aw_recorder") {
-    
-    std::string safety_formula, spec_syntax_file_path;
+    // CLI configurable parameters (which normally change per run)
+    this->declare_parameter<std::string>("output_path", TRACE_FILE_PATH);
     this->declare_parameter<bool>("planning_shield_enabled", false);
     this->declare_parameter<int>("no_sim", 1);
+
+    // Other parameters (can be set in default.yaml file), which are less likely to change per run
     this->declare_parameter<std::string>("spec_syntax_file_path", SPEC_SYNTAX_FILE_PATH);
     this->declare_parameter<std::string>("safety_formula", SAFETY_FORMULA);
-    this->declare_parameter<std::string>("output_path", TRACE_FILE_PATH);
     this->declare_parameter<std::vector<std::string>>("topics", topic_names_);
+    
+    // inner parameters
+    this->declare_parameter<double>("speed_threshold_activation", 3.0);
+    this->declare_parameter<double>("min_acc", -7.0);
+    this->declare_parameter<double>("min_jerk", -12.0);
+    this->declare_parameter<double>("acc_start_attempt", -4.0);
+    this->declare_parameter<double>("jerk_start_attempt", -3.0);
+    this->declare_parameter<double>("acc_increment", 1.0);
+    this->declare_parameter<double>("jerk_increment", 2.66667);
+    this->declare_parameter<double>("time_bound", 5.0);
+    this->declare_parameter<int>("unsafe_confirmation_frames", 2);
+    this->declare_parameter<double>("distance_bound", 20.0);
 
+    // Get parameter values
+    this->get_parameter("output_path", output_path_);
     this->get_parameter("planning_shield_enabled", planning_shield_enabled_);
     this->get_parameter("no_sim", no_sim_);
+
+    std::string safety_formula, spec_syntax_file_path;
     this->get_parameter("spec_syntax_file_path", spec_syntax_file_path);
     this->get_parameter("safety_formula", safety_formula);
-    this->get_parameter("output_path", output_path_);
     this->get_parameter("topics", topic_names_);
+    
+    double min_acc, min_jerk, acc_start_attempt, jerk_start_attempt, acc_increment, jerk_increment;
+    double speed_threshold_activation, time_bound, distance_bound;
+    int unsafe_confirmation_frames;
+    this->get_parameter("speed_threshold_activation", speed_threshold_activation);
+    this->get_parameter("min_acc", min_acc);
+    this->get_parameter("min_jerk", min_jerk);
+    this->get_parameter("acc_start_attempt", acc_start_attempt);
+    this->get_parameter("jerk_start_attempt", jerk_start_attempt);
+    this->get_parameter("acc_increment", acc_increment);
+    this->get_parameter("jerk_increment", jerk_increment);
+    this->get_parameter("time_bound", time_bound);
+    this->get_parameter("unsafe_confirmation_frames", unsafe_confirmation_frames);
+    this->get_parameter("distance_bound", distance_bound);
+    
+    // parse topics
     for (const auto& name : topic_names_) {
         if (name == "ControlCommand") {
             topics_.push_back(std::make_shared<ControlCommandTopic>());
@@ -40,6 +72,8 @@ AWRecorder::AWRecorder()
             topics_.push_back(std::make_shared<AWSIMMetadata>());
         } else if (name == "PerceptionObject") {
             topics_.push_back(std::make_shared<PerceptionObjectTopic>());
+        } else if (name == "BoundingBoxPerceptionObject") {
+            topics_.push_back(std::make_shared<BoundingBoxPerceptionObjectTopic>());
         } else if (name == "PlanningTrajectory") {
             topics_.push_back(std::make_shared<PlanningTrajectoryTopic>());
         } else if (name == "UnverifiedPlanningTrajectory") {
@@ -91,7 +125,10 @@ AWRecorder::AWRecorder()
         this->planning_shield_ = PlanningShield(
             verified_trajectory_publisher_,
             verified_motion_velocity_publisher_,
-            safety_formula, spec_syntax_file_path);
+            safety_formula, spec_syntax_file_path,
+            speed_threshold_activation, min_acc, min_jerk,
+            acc_start_attempt, jerk_start_attempt, acc_increment, jerk_increment, 
+            time_bound, unsafe_confirmation_frames, distance_bound);
     }
     this->reset();
 
@@ -110,6 +147,7 @@ void AWRecorder::reset() {
             topic->topic_name == PLTR_UNVERIFIED_TOPIC_NAME ||
             topic->topic_name == PLTR_TOPIC_NAME ||
             topic->topic_name == PREDICTED_OBJ_TOPIC_NAME ||
+            topic->topic_name == BBOX_PREDICTED_OBJ_TOPIC_NAME ||
             topic->topic_name == CONTROL_COMMAND_TOPIC_NAME ||
             topic->topic_name == SCENARIO_PLTR_TOPIC_NAME ||
             topic->topic_name == SCENARIO_PLTR_UNVERIFIED_TOPIC_NAME) {
@@ -173,6 +211,7 @@ void AWRecorder::save_data(const std::shared_ptr<Topic> topic, const std::shared
             topic->topic_name == ESTIMATED_KIN_TOPIC_NAME ||
             topic->topic_name == PLTR_TOPIC_NAME ||
             topic->topic_name == PREDICTED_OBJ_TOPIC_NAME ||
+            topic->topic_name == BBOX_PREDICTED_OBJ_TOPIC_NAME ||
             topic->topic_name == CONTROL_COMMAND_TOPIC_NAME ||
             topic->topic_name == SCENARIO_PLTR_TOPIC_NAME ||
             topic->topic_name == PLTR_UNVERIFIED_TOPIC_NAME ||

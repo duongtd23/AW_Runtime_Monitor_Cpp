@@ -350,11 +350,19 @@ PlanningShield::PlanningShield(
         rclcpp::Publisher<autoware_planning_msgs::msg::Trajectory>::SharedPtr verified_trajectory_publisher,
         rclcpp::Publisher<autoware_planning_msgs::msg::Trajectory>::SharedPtr verified_motion_velocity_publisher,
         std::string spec_formula_str, std::string spec_syntax_file_path,
-        float speed_threshold_activation, float min_acc, float min_jerk)
+        float speed_threshold_activation, float min_acc, float min_jerk,
+        float acc_start_attempt, float jerk_start_attempt,
+        float acc_increment, float jerk_increment,
+        float time_bound,
+        int unsafe_confirmation_frames, float distance_bound)
     : verified_trajectory_publisher_(verified_trajectory_publisher),
       verified_motion_velocity_publisher_(verified_motion_velocity_publisher),
-      speed_threshold_activation_(speed_threshold_activation), min_acc_(min_acc),
-      min_jerk_(min_jerk), spec_syntax_file_path_(spec_syntax_file_path) {
+      spec_syntax_file_path_(spec_syntax_file_path),
+      speed_threshold_activation_(speed_threshold_activation), 
+      min_acc_(min_acc), min_jerk_(min_jerk), acc_start_attempt_(acc_start_attempt),
+      jerk_start_attempt_(jerk_start_attempt), acc_increment_(acc_increment),
+      jerk_increment_(jerk_increment), time_bound_(time_bound),
+      unsafe_confirmation_frames_(unsafe_confirmation_frames), distance_bound_(distance_bound) {
 
     std::vector<std::string> renamed_spec_props = renameFormula(spec_formula_str, spec_syntax_file_path);
     if (renamed_spec_props.empty()) {
@@ -465,6 +473,7 @@ void PlanningShield::intervene(const autoware_planning_msgs::msg::Trajectory& pl
         PlanningTrajectory planning_points = this->toPlanningTrajectoryObj(planning_msg, estimated_kinematic,this->ego_shape_);
         safe = this->verify(planning_points, perception_msgs);
         if (!safe) {
+            if (isRecentlyAllUnsafe()) {
             std::cout << "Unsafe planning trajectory. Replace with a safe one..." << std::endl;
             std::vector<autoware_planning_msgs::msg::TrajectoryPoint> new_trajectory_points = 
                 this->resampleTrajectoryPoints(
@@ -488,6 +497,10 @@ void PlanningShield::intervene(const autoware_planning_msgs::msg::Trajectory& pl
             this->stop_point_ = extractObjPosition(new_trajectory_points.back());
             this->has_stop_point_ = true;
             this->last_stop_time_ = current_time;
+            }
+            else {
+                this->verified_trajectory_publisher_->publish(planning_msg);
+            }
         }
     } 
     if (safe) {
@@ -521,6 +534,22 @@ bool PlanningShield::verify(const PlanningTrajectory& planning_points,
     }
 
     for (const auto& perceived_obj : latest_perception_msg["objects"]) {
+        auto current_pose = perceived_obj["pose"];
+        float current_heading = current_pose["rotation"]["z"];
+        // auto current_vel = jsonPointToVector2(perceived_obj["twist"]["linear"]);
+        auto current_position = jsonPointToVector2(current_pose["position"]);
+        float existence_prob = perceived_obj["existence_prob"];
+        float current_time = latest_perception_msg["timestamp"];
+        std::string npc_id = perceived_obj["id"];
+
+        // float distance_to_ego = glm::length(
+        //     current_position - planning_points.ego_current_state.init_pos);
+        // if (distance_to_ego > 20.0 && distance_to_ego / 
+        //     glm::length(current_vel + glm::vec2(1e-6, 1e-6)) > 10.0) {
+            //std::cout << "Skip far away NPC " << npc_id << std::endl;
+        //     continue;
+        // }
+
         // perceived object dimension
         std::vector<glm::vec2> npc_local_vertices;
         if (perceived_obj["shape"]["type"] == "box") {
@@ -537,13 +566,6 @@ bool PlanningShield::verify(const PlanningTrajectory& planning_points,
                 npc_local_vertices.push_back(glm::vec2(point["x"], point["y"]));
             }
         }
-        auto current_pose = perceived_obj["pose"];
-        float current_heading = current_pose["rotation"]["z"];
-        auto current_vel = jsonPointToVector2(perceived_obj["twist"]["linear"]);
-        auto current_position = jsonPointToVector2(current_pose["position"]);
-        float existence_prob = perceived_obj["existence_prob"];
-        float current_time = latest_perception_msg["timestamp"];
-        std::string npc_id = perceived_obj["id"];
 
         glm::vec2 cal_vel = correctVelocity(perception_msgs,
                                             current_position,
@@ -562,13 +584,12 @@ bool PlanningShield::verify(const PlanningTrajectory& planning_points,
                 return false;
             }
         }
-
-        if (!this->verifySimulatedNpcPath(planning_points,
-                            existence_prob,
-                            current_position, current_heading,
-                            current_vel, npc_local_vertices)) {
-            return false;
-        }
+        // if (!this->verifySimulatedNpcPath(planning_points,
+        //                     existence_prob,
+        //                     current_position, current_heading,
+        //                     current_vel, npc_local_vertices)) {
+        //     return false;
+        // }
 
         for (size_t i = 0; i < perceived_obj["predict_paths"].size(); ++i) {
             const auto& predicted_path = perceived_obj["predict_paths"][i];
@@ -584,8 +605,7 @@ bool PlanningShield::verify(const PlanningTrajectory& planning_points,
 
 bool PlanningShield::verifySimulatedNpcPath(const PlanningTrajectory& planning_points,
                                 float existence_prob, const glm::vec2& current_position, float current_heading,
-                                const glm::vec2& current_vel, const std::vector<glm::vec2>& npc_local_vertices,
-                                float time_bound) {
+                                const glm::vec2& current_vel, const std::vector<glm::vec2>& npc_local_vertices) {
     /**
      * Assume the NPC keep going with given (current) velocity.
      * Simulate the path and check the safety.
@@ -594,10 +614,11 @@ bool PlanningShield::verifySimulatedNpcPath(const PlanningTrajectory& planning_p
     std::vector<bool> collision_series;
     std::vector<float> distance_series;
     float last_time = -10.0;
+    bool too_far = true;
     for (const auto& ego_point : planning_points.future_points) {
         // Ego
         float time_from_start = ego_point.time_from_start;
-        if (time_from_start > time_bound) {
+        if (time_from_start > this->time_bound_) {
             break;
         }
 
@@ -624,14 +645,22 @@ bool PlanningShield::verifySimulatedNpcPath(const PlanningTrajectory& planning_p
             npc_local_vertices
         );
         collision_series.push_back(isCollision(ego_plan_vertices, npc_vertices));
-        distance_series.push_back(glm::length(planning_position - npc_position));
+        float dis = glm::length(planning_position - npc_position);
+        if (too_far && dis <= this->distance_bound_) {
+            too_far = false;
+        }
+        distance_series.push_back(dis);
+    }
+    // if the object is too far away (w.r.t. all points), skip the evaluation.
+    // note that this must be evaluated with all points, not only the starting point.
+    if (too_far) {
+        return true;
     }
     return this->evaluateSpec(time_series, collision_series, distance_series, existence_prob, 1.0);
 }
 
 bool PlanningShield::verifyPredictNpcPath(const PlanningTrajectory& planning_points,
-                              float existence_prob, const nlohmann::json& predicted_path, float current_heading, const std::vector<glm::vec2>& npc_local_vertices,
-                              float time_bound) {
+                              float existence_prob, const nlohmann::json& predicted_path, float current_heading, const std::vector<glm::vec2>& npc_local_vertices) {
     /**
     * Construct the transitions from a predicted path.
     */
@@ -651,7 +680,7 @@ bool PlanningShield::verifyPredictNpcPath(const PlanningTrajectory& planning_poi
     float last_time = -10.0;
     for (const auto& ego_point : planning_points.future_points) {
         float time_from_start = ego_point.time_from_start;
-        if (time_from_start > time_bound) {
+        if (time_from_start > this->time_bound_) {
             break;
         }
 
@@ -701,8 +730,8 @@ std::vector<autoware_planning_msgs::msg::TrajectoryPoint> PlanningShield::resamp
         size_t _id, 
         const nlohmann::json& perception_msgs, 
         const ConstantHeadingVehicle& ego_current_state) {
-    float jerk = -6.0;
-    float acc = -3.0;
+    float jerk = this->jerk_start_attempt_;
+    float acc = this->acc_start_attempt_;
     while (true) {
         std::vector<autoware_planning_msgs::msg::TrajectoryPoint> new_ahead_points = 
             resampleTrajectory(trajectory_msg.points, _id, -jerk, acc);
@@ -715,8 +744,8 @@ std::vector<autoware_planning_msgs::msg::TrajectoryPoint> PlanningShield::resamp
             std::cout << "Braking profile acc: " << acc << ", jerk: " << jerk << " was applied to revise trajectory." << std::endl;
             return mergePoints(trajectory_msg.points, _id, new_ahead_points);
         }
-        jerk -= 2.0;
-        acc -= 1.0;
+        jerk -= this->jerk_increment_;
+        acc -= this->acc_increment_;
         if (jerk < this->min_jerk_ || acc < this->min_acc_) {
             // Cannot find a trajectory that makes no collision
             // Apply the strongest braking profile

@@ -10,6 +10,24 @@ aw_recorder:
     - EstimatedKinematic
     - AWSIMMetadata
     - PerceptionObject
+    - BoundingBoxPerceptionObject
     - PlanningTrajectory
     - UnverifiedPlanningTrajectory
     - CameraFootage
+
+    # Don't activate the shield if the ego speed is below this threshold
+    speed_threshold_activation: 3.0 # m/s
+    # maximum braking deceleration and jerk
+    min_acc: -7.0    # m/s2
+    min_jerk: -12.0  # m/s3
+    # the shield first tries to apply this braking force, then gradually increase it to reach their maximum configuration
+    acc_start_attempt: -4.0   # m/s2
+    jerk_start_attempt: -4.0  # m/s3
+    acc_increment: 1.5
+    jerk_increment: 4.0
+    # ignore the planning points behind this time bound
+    time_bound: 5.0  # seconds
+    #  Number of consecutive frames that must be evaluated as unsafe before activating the safety shield.
+    unsafe_confirmation_frames: 2
+    # Ignore perceived object if its distance to ego always greater than this threshold in all planning points
+    distance_bound: 20.0  # meters

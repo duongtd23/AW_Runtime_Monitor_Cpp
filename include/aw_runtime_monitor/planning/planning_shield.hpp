@@ -10,8 +10,6 @@
 #include <functional>  // for std::function
 #include <map>
 
-const float TIME_BOUND = 4.0;
-
 class ConstantHeadingVehicle
 {
 public:
@@ -74,8 +72,12 @@ public:
         rclcpp::Publisher<autoware_planning_msgs::msg::Trajectory>::SharedPtr verified_trajectory_publisher,
         rclcpp::Publisher<autoware_planning_msgs::msg::Trajectory>::SharedPtr verified_motion_velocity_publisher,
         std::string spec_formula_str, std::string spec_syntax_file_path,
-        float speed_threshold_activation=3.0, float min_acc=-7.0, float min_jerk=-12.0);
-    
+        float speed_threshold_activation=3.0, float min_acc=-7.0, float min_jerk=-12.0,
+        float acc_start_attempt=-4.0, float jerk_start_attempt=-4.0,
+        float acc_increment=1.0, float jerk_increment=2.66666,
+        float time_bound=5.0,
+        int unsafe_confirmation_frames=2, float distance_bound=20.0);
+
     void intervene(const autoware_planning_msgs::msg::Trajectory& trajectory_msg, 
                    const nlohmann::json& recorded_data);
     void interveneMotionVelocityMsg(const autoware_planning_msgs::msg::Trajectory& trajectory_msg);
@@ -84,12 +86,10 @@ public:
                 const nlohmann::json& perception_msgs);
     bool verifySimulatedNpcPath(const PlanningTrajectory& planning_points,
                                 float existence_prob, const glm::vec2& current_position, float current_heading,
-                                const glm::vec2& current_vel, const std::vector<glm::vec2>& npc_local_vertices,
-                                float time_bound=TIME_BOUND);
+                                const glm::vec2& current_vel, const std::vector<glm::vec2>& npc_local_vertices);
 
     bool verifyPredictNpcPath(const PlanningTrajectory& planning_points,
-                              float existence_prob, const nlohmann::json& predicted_path, float current_heading, const std::vector<glm::vec2>& npc_local_vertices,
-                              float time_bound=TIME_BOUND);
+                              float existence_prob, const nlohmann::json& predicted_path, float current_heading, const std::vector<glm::vec2>& npc_local_vertices);
 
     bool evaluateSpec(const std::vector<float>& time_series,
         const std::vector<bool>& collision_series,
@@ -114,9 +114,18 @@ public:
 private:
     rclcpp::Publisher<autoware_planning_msgs::msg::Trajectory>::SharedPtr verified_trajectory_publisher_;
     rclcpp::Publisher<autoware_planning_msgs::msg::Trajectory>::SharedPtr verified_motion_velocity_publisher_;
+    std::string spec_syntax_file_path_;
     float speed_threshold_activation_;
     float min_acc_;
     float min_jerk_;
+    float acc_start_attempt_;
+    float jerk_start_attempt_;
+    float acc_increment_;
+    float jerk_increment_;
+    float time_bound_;
+    size_t unsafe_confirmation_frames_;
+    float distance_bound_;
+
     double last_stop_time_=1e20;
     glm::vec2 stop_point_;
     bool has_stop_point_ = false;
@@ -124,12 +133,11 @@ private:
     std::vector<std::string> propositions_;
     spot::parsed_formula spec_formula_;
     std::map<std::string, ComparisonFunction> proposition_map_;
-    std::string spec_syntax_file_path_;
     std::vector<bool> last_safety_evaluation_;
 
     void insertSafetyEvaluation(bool is_safe) {
         last_safety_evaluation_.push_back(is_safe);
-        if (last_safety_evaluation_.size() > 5) {
+        if (last_safety_evaluation_.size() > this->unsafe_confirmation_frames_ - 1) {
             last_safety_evaluation_.erase(last_safety_evaluation_.begin());
         }
     }

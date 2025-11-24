@@ -1,6 +1,7 @@
 #include "aw_runtime_monitor/topic.hpp"
 #include "aw_runtime_monitor/metadata/awsim_metadata.hpp"
 #include "aw_runtime_monitor/perception/perception_object.hpp"
+#include "aw_runtime_monitor/perception/boundingbox_perception_object.hpp"
 #include "aw_runtime_monitor/control/control_command.hpp"
 #include "aw_runtime_monitor/planning/planning_trajectory.hpp"
 #include "aw_runtime_monitor/planning/scenario_planning_trajectory.hpp"

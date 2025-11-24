@@ -2,6 +2,10 @@
 ## Installation
 1. Install Spot library
 
+To build:
+```bash
+colcon build --symlink-install
+```
 
 ## Usage
 To run without planning shield:
