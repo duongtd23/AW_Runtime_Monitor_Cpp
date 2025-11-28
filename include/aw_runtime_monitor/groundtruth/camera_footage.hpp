@@ -5,7 +5,7 @@
 #include "sensor_msgs/msg/image.hpp"
 #include "aw_runtime_monitor/utils.hpp"
 
-const std::string CAMERA_FOOTAGE_TOPIC_NAME = "/sensing/camera/traffic_light/image_raw";
+const std::string CAMERA_FOOTAGE_TOPIC_NAME = "/sensing/camera/camera0/image_rect_color";
 const std::string CAMERA_FOOTAGE_MSG_TYPE_STR = "sensor_msgs/msg/Image";
 
 class CameraFootageTopic : public Topic 
