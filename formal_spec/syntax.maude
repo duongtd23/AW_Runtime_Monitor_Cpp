@@ -83,7 +83,7 @@ mod MANIPULATE-SYNTAX is
        STR := printTokens(Q) /\
        STR2 := comparisonOpRename(Q2) /\
        STR3 := printTokens(Q3) /\
-       STR4 := STR + "$" + STR2 + "$" + STR3 /\
+       STR4 := STR + "_" + STR2 + "_" + STR3 /\
        Q4 := tokenize(STR4 + ".Prop") .
 
   ceq metaRename(Q[TL]) = < Q[TL2] ; STRS >

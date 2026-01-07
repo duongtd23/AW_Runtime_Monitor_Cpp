@@ -363,7 +363,8 @@ PlanningShield::PlanningShield(
       jerk_start_attempt_(jerk_start_attempt), acc_increment_(acc_increment),
       jerk_increment_(jerk_increment), time_bound_(time_bound),
       unsafe_confirmation_frames_(unsafe_confirmation_frames), distance_bound_(distance_bound) {
-
+    
+    // the first element is the renamed formula, the rest are the renamed propositions
     std::vector<std::string> renamed_spec_props = renameFormula(spec_formula_str, spec_syntax_file_path);
     if (renamed_spec_props.empty()) {
         throw std::runtime_error("Failed to parse the formula.");
@@ -372,16 +373,15 @@ PlanningShield::PlanningShield(
 
     for (size_t i = 1; i < renamed_spec_props.size(); ++i) {
         std::string& prop = renamed_spec_props[i];
-        if (prop.find('$') != std::string::npos) {
-            std::vector<std::string> tokens = splitString(prop, '$');
+        if (prop.find('_') != std::string::npos) {
+            std::vector<std::string> tokens = splitString(prop, '_');
 
             if (prop.find('-') != std::string::npos) {
-                // e.g., time-le-1.0e-1
+                // e.g., time_le_1.0e-1
                 std::string old_str = prop;
                 std::replace(prop.begin(), prop.end(), '-', '_');
                 replaceSubStr(renamed_spec_formula_str, old_str, prop);
             }
-            std::replace(prop.begin(), prop.end(), '$', '_');
             if (tokens[1] == "gt") {
                 this->proposition_map_[prop] = [threshold = std::stof(tokens[2])](float val) {
                     return val > threshold;
@@ -414,13 +414,12 @@ PlanningShield::PlanningShield(
         this->propositions_.push_back(prop);
     }
 
-    std::replace(renamed_spec_formula_str.begin(), renamed_spec_formula_str.end(), '$', '_');
     replaceSubStr(renamed_spec_formula_str, "\\\\", "\\");
 
     std::cout << "Spec formula: " << renamed_spec_formula_str << std::endl;
-    // for (const std::string& p : this->propositions_) {
-    //     std::cout << "Proposition: " << p << std::endl;
-    // }
+    for (const std::string& p : this->propositions_) {
+        std::cout << "Proposition: " << p << std::endl;
+    }
     // std::cout << this->proposition_map_.size() << std::endl;
     // for (const auto& [key, _] : this->proposition_map_) {
     //     std::cout << "Mapped proposition: " << key << std::endl;
@@ -719,6 +718,7 @@ bool PlanningShield::verifyPredictNpcPath(const PlanningTrajectory& planning_poi
         );
         collision_series.push_back(isCollision(ego_plan_vertices, npc_vertices));
         distance_series.push_back(glm::length(planning_position - estimated_npc_pos));
+        time_series.push_back(time_from_start);
     }
     float path_confidence = predicted_path["confidence"];
     return this->evaluateSpec(time_series, collision_series, distance_series, existence_prob, path_confidence);
