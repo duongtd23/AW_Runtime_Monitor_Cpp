@@ -2,6 +2,7 @@
 #include "aw_runtime_monitor/metadata/awsim_metadata.hpp"
 #include "aw_runtime_monitor/perception/perception_object.hpp"
 #include "aw_runtime_monitor/perception/boundingbox_perception_object.hpp"
+#include "aw_runtime_monitor/perception/perception_shield.hpp"
 #include "aw_runtime_monitor/control/control_command.hpp"
 #include "aw_runtime_monitor/planning/planning_trajectory.hpp"
 #include "aw_runtime_monitor/planning/scenario_planning_trajectory.hpp"
@@ -32,8 +33,6 @@ public:
     void cliInterrupt();
 
 private:
-    bool planning_shield_enabled_ = false;
-    PlanningShield planning_shield_;
     nlohmann::json recorded_data_;
     std::vector<std::string> topic_names_;
     std::vector<std::shared_ptr<Topic>> topics_;
@@ -42,12 +41,24 @@ private:
     std::vector<std::pair<cv::Mat, double>> frames_;
     image_transport::Subscriber camera_footage_sub_;
 
+    bool planning_shield_enabled_ = false;
+    PlanningShield planning_shield_;
+
+    bool perception_shield_enabled_ = false;
+    PerceptionShield perception_shield_;
+
     std::vector<rclcpp::GenericSubscription::SharedPtr> subscriptions_;  // Store subscriptions to keep them alive
     rclcpp::Publisher<autoware_planning_msgs::msg::Trajectory>::SharedPtr verified_trajectory_publisher_;
     rclcpp::Publisher<autoware_planning_msgs::msg::Trajectory>::SharedPtr verified_motion_velocity_publisher_;
 
+    rclcpp::Publisher<autoware_perception_msgs::msg::PredictedObjects>::SharedPtr shielded_perception_publisher_;
+
     bool is_recording_ = false;
     size_t no_sim_ = 1;
+
+    void initializeParameters();
+    void perceptionShieldInit();
+    void planningShieldInit();
 
     // Unified callback for all subscriptions
     void unifiedCallback(const std::shared_ptr<rclcpp::SerializedMessage> msg, 

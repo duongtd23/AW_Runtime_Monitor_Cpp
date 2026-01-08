@@ -6,22 +6,24 @@
 #include <utility>
 
 // using std::placeholders::_1;
-const std::string SAFETY_FORMULA = "[] (pathConfidence >= 0.1 /\\ time <= 3.0 -> ~ collision)";
+const std::string PLANNING_SPEC = "[] (pathConfidence >= 0.1 /\\ time <= 3.0 -> ~ collision)";
 const std::string SPEC_SYNTAX_FILE_PATH = "formal_spec/syntax.maude";
 const std::string TRACE_FILE_PATH = "recorded_data";
 
-AWRecorder::AWRecorder() 
-        : Node("aw_recorder") {
+/**
+ * @brief Initialize parameters, e.g., output path, no_sim
+ */
+void AWRecorder::initializeParameters() {
     // CLI configurable parameters (which normally change per run)
     this->declare_parameter<std::string>("output_path", TRACE_FILE_PATH);
-    this->declare_parameter<bool>("planning_shield_enabled", false);
     this->declare_parameter<int>("no_sim", 1);
 
-    // Other parameters (can be set in default.yaml file), which are less likely to change per run
+    // planning shield parameters
+    this->declare_parameter<bool>("planning_shield_enabled", false);
+    // Other parameters for the planning shield (can be set in default.yaml file), which are less likely to change per run
     this->declare_parameter<std::string>("spec_syntax_file_path", SPEC_SYNTAX_FILE_PATH);
-    this->declare_parameter<std::string>("safety_formula", SAFETY_FORMULA);
+    this->declare_parameter<std::string>("safety_formula", PLANNING_SPEC);
     this->declare_parameter<std::vector<std::string>>("topics", topic_names_);
-    
     // inner parameters
     this->declare_parameter<double>("speed_threshold_activation", 3.0);
     this->declare_parameter<double>("min_acc", -7.0);
@@ -34,30 +36,93 @@ AWRecorder::AWRecorder()
     this->declare_parameter<int>("unsafe_confirmation_frames", 2);
     this->declare_parameter<double>("distance_bound", 20.0);
 
-    // Get parameter values
-    this->get_parameter("output_path", output_path_);
-    this->get_parameter("planning_shield_enabled", planning_shield_enabled_);
-    this->get_parameter("no_sim", no_sim_);
+    // perception shield parameters
+    this->declare_parameter<bool>("perception_shield_enabled", false);
+    this->declare_parameter<std::string>("perception_spec", "T");
+    this->declare_parameter<double>("speed_threshold_perp_shield_activation", 3.0);
+}
 
-    std::string safety_formula, spec_syntax_file_path;
-    this->get_parameter("spec_syntax_file_path", spec_syntax_file_path);
-    this->get_parameter("safety_formula", safety_formula);
+/**
+ * @brief Initialize the perception shield
+ */
+void AWRecorder::perceptionShieldInit() {
+    rclcpp::QoS qos(rclcpp::KeepLast(1));
+    qos.reliability(rclcpp::ReliabilityPolicy::Reliable);
+    shielded_perception_publisher_ =
+        this->create_publisher<autoware_perception_msgs::msg::PredictedObjects>(PREDICTED_OBJ_TOPIC_NAME, qos);
+
+    if (perception_shield_enabled_) {
+        RCLCPP_INFO(this->get_logger(), "Perception shield is enabled.");
+        std::string perception_spec_str;
+        double speed_threshold_activation;
+        this->get_parameter("speed_threshold_perp_shield_activation", speed_threshold_activation);
+        this->get_parameter("perception_spec", perception_spec_str);
+        this->perception_shield_ = PerceptionShield(perception_spec_str, speed_threshold_activation);
+    }
+}
+
+/**
+ * @brief Initialize the planning shield
+ */
+void AWRecorder::planningShieldInit() {
+    rclcpp::QoS qos(rclcpp::KeepLast(1));
+    qos.reliability(rclcpp::ReliabilityPolicy::Reliable);
+    verified_trajectory_publisher_ =
+        this->create_publisher<autoware_planning_msgs::msg::Trajectory>(PLTR_TOPIC_NAME, qos);
+    verified_motion_velocity_publisher_ =
+        this->create_publisher<autoware_planning_msgs::msg::Trajectory>(SCENARIO_PLTR_TOPIC_NAME, qos);
+
+    if (planning_shield_enabled_) {
+        RCLCPP_INFO(this->get_logger(), "Planning shield is enabled.");
+        std::string safety_formula, spec_syntax_file_path;
+        this->get_parameter("spec_syntax_file_path", spec_syntax_file_path);
+        this->get_parameter("safety_formula", safety_formula);
+
+        double min_acc, min_jerk, acc_start_attempt, jerk_start_attempt, acc_increment, jerk_increment;
+        double speed_threshold_activation, time_bound, distance_bound;
+        int unsafe_confirmation_frames;
+        this->get_parameter("speed_threshold_activation", speed_threshold_activation);
+        this->get_parameter("min_acc", min_acc);
+        this->get_parameter("min_jerk", min_jerk);
+        this->get_parameter("acc_start_attempt", acc_start_attempt);
+        this->get_parameter("jerk_start_attempt", jerk_start_attempt);
+        this->get_parameter("acc_increment", acc_increment);
+        this->get_parameter("jerk_increment", jerk_increment);
+        this->get_parameter("time_bound", time_bound);
+        this->get_parameter("unsafe_confirmation_frames", unsafe_confirmation_frames);
+        this->get_parameter("distance_bound", distance_bound);
+        this->planning_shield_ = PlanningShield(
+            verified_trajectory_publisher_,
+            verified_motion_velocity_publisher_,
+            safety_formula, spec_syntax_file_path,
+            speed_threshold_activation, min_acc, min_jerk,
+            acc_start_attempt, jerk_start_attempt, acc_increment, jerk_increment, 
+            time_bound, unsafe_confirmation_frames, distance_bound);
+
+        // if planning shield is enabled, add necessary topics to subscribe
+        if (std::find(topic_names_.begin(), topic_names_.end(), "UnverifiedPlanningTrajectory") == topic_names_.end()) {
+            auto topic = std::make_shared<UnverifiedPlanningTrajectoryTopic>();
+            topic->save_data = false;
+            topics_.push_back(topic);
+        }
+        if (std::find(topic_names_.begin(), topic_names_.end(), "UnverifiedScenarioPlanningTrajectory") == topic_names_.end()) {
+            auto topic = std::make_shared<UnverifiedScenarioPlanningTrajectoryTopic>();
+            topic->save_data = false;
+            topics_.push_back(topic);
+        }
+    }
+}
+
+AWRecorder::AWRecorder() : Node("aw_recorder") {
+    this->initializeParameters();
+
+    // Load parameter values
+    this->get_parameter("output_path", output_path_);
+    this->get_parameter("no_sim", no_sim_);
     this->get_parameter("topics", topic_names_);
-    
-    double min_acc, min_jerk, acc_start_attempt, jerk_start_attempt, acc_increment, jerk_increment;
-    double speed_threshold_activation, time_bound, distance_bound;
-    int unsafe_confirmation_frames;
-    this->get_parameter("speed_threshold_activation", speed_threshold_activation);
-    this->get_parameter("min_acc", min_acc);
-    this->get_parameter("min_jerk", min_jerk);
-    this->get_parameter("acc_start_attempt", acc_start_attempt);
-    this->get_parameter("jerk_start_attempt", jerk_start_attempt);
-    this->get_parameter("acc_increment", acc_increment);
-    this->get_parameter("jerk_increment", jerk_increment);
-    this->get_parameter("time_bound", time_bound);
-    this->get_parameter("unsafe_confirmation_frames", unsafe_confirmation_frames);
-    this->get_parameter("distance_bound", distance_bound);
-    
+    this->get_parameter("perception_shield_enabled", perception_shield_enabled_);
+    this->get_parameter("planning_shield_enabled", planning_shield_enabled_);
+
     // parse topics
     for (const auto& name : topic_names_) {
         if (name == "ControlCommand") {
@@ -71,7 +136,7 @@ AWRecorder::AWRecorder()
         } else if (name == "AWSIMMetadata") {
             topics_.push_back(std::make_shared<AWSIMMetadata>());
         } else if (name == "PerceptionObject") {
-            topics_.push_back(std::make_shared<PerceptionObjectTopic>());
+            topics_.push_back(std::make_shared<PerceptionObjectTopic>(perception_shield_enabled_));
         } else if (name == "BoundingBoxPerceptionObject") {
             topics_.push_back(std::make_shared<BoundingBoxPerceptionObjectTopic>());
         } else if (name == "PlanningTrajectory") {
@@ -96,44 +161,15 @@ AWRecorder::AWRecorder()
             RCLCPP_ERROR(this->get_logger(), "Unknown topic name: %s", name.c_str());
         }
     }
-    // if planning shield is enabled, add necessary topics
-    if (planning_shield_enabled_) {
-        if (std::find(topic_names_.begin(), topic_names_.end(), "UnverifiedPlanningTrajectory") == topic_names_.end()) {
-            auto topic = std::make_shared<UnverifiedPlanningTrajectoryTopic>();
-            topic->save_data = false;
-            topics_.push_back(topic);
-        }
-        if (std::find(topic_names_.begin(), topic_names_.end(), "UnverifiedScenarioPlanningTrajectory") == topic_names_.end()) {
-            auto topic = std::make_shared<UnverifiedScenarioPlanningTrajectoryTopic>();
-            topic->save_data = false;
-            topics_.push_back(topic);
-        }
-    }
+    
     // for tracking autonomous driving state, e.g., starting moving, goal arrived
     topics_.push_back(std::make_shared<OperationModeTrackerTopic>());
     topics_.push_back(std::make_shared<RouteStateTrackerTopic>());
 
-    rclcpp::QoS qos(rclcpp::KeepLast(1));
-    qos.reliability(rclcpp::ReliabilityPolicy::Reliable);
+    this->perceptionShieldInit();
+    this->planningShieldInit();
 
-    verified_trajectory_publisher_ =
-        this->create_publisher<autoware_planning_msgs::msg::Trajectory>(PLTR_TOPIC_NAME, qos);
-    verified_motion_velocity_publisher_ =
-        this->create_publisher<autoware_planning_msgs::msg::Trajectory>(SCENARIO_PLTR_TOPIC_NAME, qos);
-
-    if (planning_shield_enabled_) {
-        this->planning_shield_ = PlanningShield(
-            verified_trajectory_publisher_,
-            verified_motion_velocity_publisher_,
-            safety_formula, spec_syntax_file_path,
-            speed_threshold_activation, min_acc, min_jerk,
-            acc_start_attempt, jerk_start_attempt, acc_increment, jerk_increment, 
-            time_bound, unsafe_confirmation_frames, distance_bound);
-    }
     this->reset();
-
-    // to check if spot exists
-    // std::cout << "Hello world!\nThis is Spot " << spot::version() << ".\n";
 }
 
 void AWRecorder::reset() {
@@ -159,6 +195,8 @@ void AWRecorder::reset() {
             this->recorded_data_[topic->traceKey()].clear();
         } 
     }
+    if (perception_shield_enabled_)
+        this->recorded_data_[PerceptionObjectTopic::SHIELDED_TRACE_KEY()] = nlohmann::json::array();
     this->frames_.clear();
 }
 
@@ -207,17 +245,17 @@ void AWRecorder::save_data(const std::shared_ptr<Topic> topic, const std::shared
             if (topic->save_data)
                 this->recorded_data_[topic->traceKey()] = json_data;
     } 
-    else if (topic->topic_name == GROUNDTRUTH_KINEMATIC_TOPIC_NAME ||
+    else if (dynamic_cast<PerceptionObjectTopic*>(topic.get()) ||
+            topic->topic_name == GROUNDTRUTH_KINEMATIC_TOPIC_NAME ||
             topic->topic_name == ESTIMATED_KIN_TOPIC_NAME ||
             topic->topic_name == PLTR_TOPIC_NAME ||
-            topic->topic_name == PREDICTED_OBJ_TOPIC_NAME ||
             topic->topic_name == BBOX_PREDICTED_OBJ_TOPIC_NAME ||
             topic->topic_name == CONTROL_COMMAND_TOPIC_NAME ||
             topic->topic_name == SCENARIO_PLTR_TOPIC_NAME ||
             topic->topic_name == PLTR_UNVERIFIED_TOPIC_NAME ||
             topic->topic_name == SCENARIO_PLTR_UNVERIFIED_TOPIC_NAME) {
-                if (topic->save_data)
-                    this->recorded_data_[topic->traceKey()].emplace_back(json_data);
+        if (topic->save_data)
+            this->recorded_data_[topic->traceKey()].emplace_back(json_data);
     }
 }
 
@@ -246,6 +284,26 @@ void AWRecorder::unifiedCallback(const std::shared_ptr<rclcpp::SerializedMessage
             this->planning_shield_.interveneMotionVelocityMsg(trajectory_msg);
         } else {
             this->verified_motion_velocity_publisher_->publish(trajectory_msg);
+        }
+    }
+    else if (perception_shield_enabled_ && topic->topic_name == PREDICTED_OBJ_UNSHIELDED_TOPIC_NAME) {
+        RCLCPP_DEBUG(this->get_logger(), "Unshielded perception object message received.");
+        autoware_perception_msgs::msg::PredictedObjects perp_obj_msg;
+        rclcpp::Serialization<autoware_perception_msgs::msg::PredictedObjects> serializer;
+        rclcpp::SerializedMessage extracted_serialized_msg(*msg);
+        serializer.deserialize_message(&extracted_serialized_msg, &perp_obj_msg);
+
+        auto msg_or_null = this->perception_shield_.verify(perp_obj_msg, this->recorded_data_);
+        if (msg_or_null.has_value()) {
+            // RCLCPP_WARN(this->get_logger(), "Perception shield intervened a message.");
+            // revised message was NOT yet published by the shield
+            shielded_perception_publisher_->publish(msg_or_null.value());
+            // write the revised message to the recorded data
+            this->recorded_data_[PerceptionObjectTopic::SHIELDED_TRACE_KEY()].emplace_back(
+                PerceptionObjectTopic::perpMsgToJson(msg_or_null.value()));
+        } else {
+            // message was safe, so just publish the original message
+            shielded_perception_publisher_->publish(perp_obj_msg);
         }
     }
     else if (topic->topic_name == OP_MODE_TOPIC_NAME) {

@@ -18,7 +18,7 @@ public:
     std::string traceKey() override;
     static std::string TRACE_KEY() { return "boundingbox_perception_objects"; }
 
-    rclcpp::QoS qosProfile() {
+    rclcpp::QoS qosProfile() override {
         rclcpp::QoS qos(rclcpp::KeepLast(1));
         qos.reliability(rclcpp::ReliabilityPolicy::Reliable);
         return qos;

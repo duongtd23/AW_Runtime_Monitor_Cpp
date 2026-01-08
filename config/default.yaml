@@ -1,9 +1,7 @@
 aw_recorder:
   ros__parameters:
-    planning_shield_enabled: true
-    safety_formula: '[] (pathConfidence >= 0.1 /\ time <= 3.0 -> ~ collision)'
-    spec_syntax_file_path: 'formal_spec/syntax.maude'
-    topics:
+    # For recorder
+    topics:  # topics to be recorded
     - ControlCommand
     - GroundtruthKinematic
     - GroundtruthSize
@@ -12,9 +10,14 @@ aw_recorder:
     - PerceptionObject
     - BoundingBoxPerceptionObject
     - PlanningTrajectory
-    - UnverifiedPlanningTrajectory
+    # - UnverifiedPlanningTrajectory
     - CameraFootage
-
+  
+    # For planning shield
+    planning_shield_enabled: false
+    safety_formula: '[] (pathConfidence >= 0.1 /\ time <= 3.0 -> ~ collision)'
+    spec_syntax_file_path: 'formal_spec/syntax.maude'
+    
     # Don't activate the shield if the ego speed is below this threshold
     speed_threshold_activation: 3.0 # m/s
     # maximum braking deceleration and jerk
@@ -31,3 +34,10 @@ aw_recorder:
     unsafe_confirmation_frames: 2
     # Ignore perceived object if its distance to ego always greater than this threshold in all planning points
     distance_bound: 20.0  # meters
+
+    # For perception shield
+    perception_shield_enabled: true
+    perception_spec: '[](x.(forall id@x. ((present(x+1, id) )-> present(x+2, id) )))'
+    window_size: 3
+    # Don't activate the shield if the ego speed is below this threshold
+    speed_threshold_perp_shield_activation: 3.0 # m/s

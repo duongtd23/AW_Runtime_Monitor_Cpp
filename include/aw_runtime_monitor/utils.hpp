@@ -56,4 +56,6 @@ std::vector<std::string> toVectorString(const std::string& result);
 glm::vec3 getCurrentVelocity(const nlohmann::json& recorded_messages);
 float getCurrentSpeed(const nlohmann::json& recorded_messages);
 
+glm::vec3 rosPointToVector3(const geometry_msgs::msg::Point& point_msg);
+glm::vec3 rosPointToVector3(const geometry_msgs::msg::Vector3& vector_msg);
 #endif

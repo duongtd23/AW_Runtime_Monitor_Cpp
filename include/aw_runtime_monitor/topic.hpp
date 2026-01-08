@@ -24,7 +24,7 @@ public:
     virtual nlohmann::json msgToJson(const std::shared_ptr<rclcpp::SerializedMessage>& msg) = 0;
     virtual std::string traceKey() = 0;
 
-    rclcpp::QoS qosProfile() {
+    virtual rclcpp::QoS qosProfile() {
         rclcpp::QoS qos(rclcpp::KeepLast(1));
         qos.reliability(rclcpp::ReliabilityPolicy::BestEffort);
         return qos;
