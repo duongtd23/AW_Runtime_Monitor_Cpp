@@ -26,10 +26,10 @@ nlohmann::json EstimatedKinematicTopic::msgToJson(const std::shared_ptr<rclcpp::
         j["pose"]["rotation"] = quaternionToJsonEulerAngles(kinematic_msg.pose.pose.pose.orientation);
 
         j["twist"]["linear"] = vector3ToJsonPoint(kinematic_msg.twist.twist.twist.linear);
-        j["twist"]["angular"] = vector3ToJsonPoint(kinematic_msg.twist.twist.twist.angular);
+        j["twist"]["angular"] = rosAngularVelToJsonPoint(kinematic_msg.twist.twist.twist.angular);
 
         j["acceleration"]["linear"] = vector3ToJsonPoint(kinematic_msg.accel.accel.accel.linear);
-        j["acceleration"]["angular"] = vector3ToJsonPoint(kinematic_msg.accel.accel.accel.angular);
+        j["acceleration"]["angular"] = rosAngularVelToJsonPoint(kinematic_msg.accel.accel.accel.angular);
 
     } catch (const std::exception& e) {
         // Handle deserialization errors

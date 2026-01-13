@@ -26,9 +26,9 @@ nlohmann::json GroundtruthKinematicTopic::msgToJson(const std::shared_ptr<rclcpp
         j["groundtruth_ego"]["pose"]["position"] = vector3ToJsonPoint(groundtruth_kinematic_msg.groundtruth_ego.pose.position);
         j["groundtruth_ego"]["pose"]["rotation"] = vector3ToJsonPoint(groundtruth_kinematic_msg.groundtruth_ego.pose.rotation);
         j["groundtruth_ego"]["twist"]["linear"] = vector3ToJsonPoint(groundtruth_kinematic_msg.groundtruth_ego.twist.linear);
-        j["groundtruth_ego"]["twist"]["angular"] = vector3ToJsonPoint(groundtruth_kinematic_msg.groundtruth_ego.twist.angular);
+        j["groundtruth_ego"]["twist"]["angular"] = rosAngularVelToJsonPoint(groundtruth_kinematic_msg.groundtruth_ego.twist.angular);
         j["groundtruth_ego"]["acceleration"]["linear"] = vector3ToJsonPoint(groundtruth_kinematic_msg.groundtruth_ego.accel.linear);
-        j["groundtruth_ego"]["acceleration"]["angular"] = vector3ToJsonPoint(groundtruth_kinematic_msg.groundtruth_ego.accel.angular);
+        j["groundtruth_ego"]["acceleration"]["angular"] = rosAngularVelToJsonPoint(groundtruth_kinematic_msg.groundtruth_ego.accel.angular);
 
         j["groundtruth_vehicles"] = nlohmann::json::array();
         for (const auto& vehicle : groundtruth_kinematic_msg.groundtruth_vehicles) {

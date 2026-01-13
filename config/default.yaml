@@ -37,7 +37,7 @@ aw_recorder:
 
     # For perception shield
     perception_shield_enabled: true
-    perception_spec: '[](x.(forall id@x. ((present(x+1, id) )-> present(x+2, id) )))'
+    perception_spec: '[](x.(forall id@x. ((present(x+1, id)) -> present(x+2, id) )))'
     window_size: 3
     # Don't activate the shield if the ego speed is below this threshold
     speed_threshold_perp_shield_activation: 3.0 # m/s

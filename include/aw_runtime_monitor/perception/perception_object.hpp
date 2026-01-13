@@ -55,10 +55,10 @@ public:
             pobj["pose"]["rotation"] = quaternionToJsonEulerAngles(entry.kinematics.initial_pose_with_covariance.pose.orientation);
 
             pobj["twist"]["linear"] = vector3ToJsonPoint(entry.kinematics.initial_twist_with_covariance.twist.linear);
-            pobj["twist"]["angular"] = vector3ToJsonPoint(entry.kinematics.initial_twist_with_covariance.twist.angular);
+            pobj["twist"]["angular"] = rosAngularVelToJsonPoint(entry.kinematics.initial_twist_with_covariance.twist.angular);
 
             pobj["acceleration"]["linear"] = vector3ToJsonPoint(entry.kinematics.initial_acceleration_with_covariance.accel.linear);
-            pobj["acceleration"]["angular"] = vector3ToJsonPoint(entry.kinematics.initial_acceleration_with_covariance.accel.angular);
+            pobj["acceleration"]["angular"] = rosAngularVelToJsonPoint(entry.kinematics.initial_acceleration_with_covariance.accel.angular);
 
             // shape
             if (entry.shape.type == SHAPE_BOUNDING_BOX) {

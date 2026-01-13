@@ -23,7 +23,7 @@ find_package(aw_monitor REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(image_transport REQUIRED)
 find_package(OpenCV REQUIRED)
-
+find_package(Eigen3 REQUIRED)
 
 include_directories(include
   /usr/local/include
@@ -73,6 +73,7 @@ ament_target_dependencies(monitor
 target_link_libraries(monitor
   spot
   bddx
+  Eigen3::Eigen
 )
 install(
   DIRECTORY config

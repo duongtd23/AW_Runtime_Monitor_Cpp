@@ -52,12 +52,12 @@ void AWRecorder::perceptionShieldInit() {
         this->create_publisher<autoware_perception_msgs::msg::PredictedObjects>(PREDICTED_OBJ_TOPIC_NAME, qos);
 
     if (perception_shield_enabled_) {
-        RCLCPP_INFO(this->get_logger(), "Perception shield is enabled.");
         std::string perception_spec_str;
-        double speed_threshold_activation;
+        double speed_threshold_activation;  
         this->get_parameter("speed_threshold_perp_shield_activation", speed_threshold_activation);
         this->get_parameter("perception_spec", perception_spec_str);
         this->perception_shield_ = PerceptionShield(perception_spec_str, speed_threshold_activation);
+        RCLCPP_INFO(this->get_logger(), "Perception shield is enabled, formula: %s", perception_shield_.getSpecFormula()->toString().c_str());
     }
 }
 
@@ -182,7 +182,7 @@ void AWRecorder::reset() {
             topic->topic_name == ESTIMATED_KIN_TOPIC_NAME ||
             topic->topic_name == PLTR_UNVERIFIED_TOPIC_NAME ||
             topic->topic_name == PLTR_TOPIC_NAME ||
-            topic->topic_name == PREDICTED_OBJ_TOPIC_NAME ||
+            dynamic_cast<PerceptionObjectTopic*>(topic.get()) ||
             topic->topic_name == BBOX_PREDICTED_OBJ_TOPIC_NAME ||
             topic->topic_name == CONTROL_COMMAND_TOPIC_NAME ||
             topic->topic_name == SCENARIO_PLTR_TOPIC_NAME ||
@@ -195,8 +195,10 @@ void AWRecorder::reset() {
             this->recorded_data_[topic->traceKey()].clear();
         } 
     }
-    if (perception_shield_enabled_)
+    if (perception_shield_enabled_) {
         this->recorded_data_[PerceptionObjectTopic::SHIELDED_TRACE_KEY()] = nlohmann::json::array();
+        this->perception_shield_.reset();
+    }
     this->frames_.clear();
 }
 
@@ -287,7 +289,7 @@ void AWRecorder::unifiedCallback(const std::shared_ptr<rclcpp::SerializedMessage
         }
     }
     else if (perception_shield_enabled_ && topic->topic_name == PREDICTED_OBJ_UNSHIELDED_TOPIC_NAME) {
-        RCLCPP_DEBUG(this->get_logger(), "Unshielded perception object message received.");
+        // RCLCPP_DEBUG(this->get_logger(), "Unshielded perception object message received.");
         autoware_perception_msgs::msg::PredictedObjects perp_obj_msg;
         rclcpp::Serialization<autoware_perception_msgs::msg::PredictedObjects> serializer;
         rclcpp::SerializedMessage extracted_serialized_msg(*msg);
@@ -305,6 +307,8 @@ void AWRecorder::unifiedCallback(const std::shared_ptr<rclcpp::SerializedMessage
             // message was safe, so just publish the original message
             shielded_perception_publisher_->publish(perp_obj_msg);
         }
+        this->perception_shield_.cacheRecordedMsg(perp_obj_msg);
+
     }
     else if (topic->topic_name == OP_MODE_TOPIC_NAME) {
         autoware_vehicle_msgs::msg::Engage engage_msg;

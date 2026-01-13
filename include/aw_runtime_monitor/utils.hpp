@@ -27,6 +27,7 @@ double roundDouble(double original_value);
 nlohmann::json vector3ToJsonPoint(const geometry_msgs::msg::Vector3& obj, bool round=true);
 nlohmann::json pointToJsonPoint(const geometry_msgs::msg::Point& msg, bool round=true);
 nlohmann::json pointToJsonPoint(const geometry_msgs::msg::Point32& msg, bool round=true);
+nlohmann::json rosAngularVelToJsonPoint(const geometry_msgs::msg::Vector3& angular_vel_msg, bool round=true);
 nlohmann::json quaternionToJsonEulerAngles(const geometry_msgs::msg::Quaternion& quat_msg, bool round=true);
 double timestamp(const builtin_interfaces::msg::Duration& duration, bool round=true);
 double timestamp(const builtin_interfaces::msg::Time& stamp, bool round=true);

@@ -6,6 +6,7 @@
 #include "aw_runtime_monitor/perception/perception_object.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include <tqtl/tqtl.hpp>
+#include <vector>
 
 class PerceptionShield
 {
@@ -22,11 +23,29 @@ public:
     std::optional<autoware_perception_msgs::msg::PredictedObjects>
     verify(const autoware_perception_msgs::msg::PredictedObjects& perp_obj_msg, nlohmann::json& recorded_data);
 
+    tqtl::FormulaPtr getSpecFormula() const {
+        return perception_spec_;
+    }
+
+    void cacheRecordedMsg(const autoware_perception_msgs::msg::PredictedObjects& perp_obj_msg) {
+        recorded_perp_msgs_.emplace_back(perp_obj_msg);
+        // keep only up to window_size_ msgs
+        while (recorded_perp_msgs_.size() > window_size_ + 5) {
+            recorded_perp_msgs_.erase(recorded_perp_msgs_.begin());
+        }
+    }
+
+    void reset() {
+        perp_data_stream_.clear();
+        recorded_perp_msgs_.clear();
+    }
 private:
     tqtl::FormulaPtr perception_spec_;
     size_t window_size_ = 10;
     tqtl::DataStream perp_data_stream_;
     double speed_threshold_activation_ = 3.0; // m/s
+    // cache recorded msgs
+    std::vector<autoware_perception_msgs::msg::PredictedObjects> recorded_perp_msgs_;
 
     rclcpp::Logger logger_;
 };

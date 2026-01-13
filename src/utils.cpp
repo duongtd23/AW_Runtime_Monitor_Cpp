@@ -51,6 +51,28 @@ nlohmann::json pointToJsonPoint(const geometry_msgs::msg::Point32& msg, bool rou
     return j;
 }
 
+/**
+ * @brief Convert a ROS Vector3 message representing angular velocity (in radians/sec)
+ *        to a JSON object containing roll, pitch, yaw in degrees.
+ */
+nlohmann::json rosAngularVelToJsonPoint(const geometry_msgs::msg::Vector3& angular_vel_msg, bool round) {
+    nlohmann::json j;
+    if (round) {
+        j["roll"] = roundDouble(angular_vel_msg.x * 180/M_PI);
+        j["pitch"] = roundDouble(angular_vel_msg.y * 180/M_PI);
+        j["yaw"] = roundDouble(angular_vel_msg.z * 180/M_PI);
+    }
+    else {
+        j["roll"] = angular_vel_msg.x * 180/M_PI;
+        j["pitch"] = angular_vel_msg.y * 180/M_PI;
+        j["yaw"] = angular_vel_msg.z * 180/M_PI;
+    }
+    return j;
+}
+
+/**
+ * @brief Convert a ROS Quaternion message to Euler angles (roll, pitch, yaw) in degrees.
+ */
 std::array<double, 3> quaternionToEulerAngles(const geometry_msgs::msg::Quaternion& quat_msg) {
     tf2::Quaternion tf_quat;
     tf2::fromMsg(quat_msg, tf_quat);
@@ -66,6 +88,9 @@ std::array<double, 3> quaternionToEulerAngles(const geometry_msgs::msg::Quaterni
     return {roll, pitch, yaw};
 }
 
+/**
+ * @brief Convert a ROS Quaternion message to a JSON object containing Euler angles (roll, pitch, yaw) in degrees.
+ */
 nlohmann::json quaternionToJsonEulerAngles(const geometry_msgs::msg::Quaternion& quat_msg, bool round) {
     auto angles = quaternionToEulerAngles(quat_msg);
     nlohmann::json j;
