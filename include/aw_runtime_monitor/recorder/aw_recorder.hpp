@@ -56,6 +56,10 @@ private:
     bool is_recording_ = false;
     size_t no_sim_ = 1;
 
+    // Subscriptions for map and route, used in planning shield
+    rclcpp::Subscription<autoware_map_msgs::msg::LaneletMapBin>::SharedPtr map_sub_;
+    rclcpp::Subscription<autoware_planning_msgs::msg::LaneletRoute>::SharedPtr route_sub_;
+
     void initializeParameters();
     void perceptionShieldInit();
     void planningShieldInit();
@@ -64,6 +68,7 @@ private:
     void unifiedCallback(const std::shared_ptr<rclcpp::SerializedMessage> msg, 
                         const std::shared_ptr<Topic> topic);
     void save_data(const std::shared_ptr<Topic> topic, const std::shared_ptr<rclcpp::SerializedMessage> msg);
+    RevisionConfig loadRevisionConfig();
     
     void reset();
     void startRecording();

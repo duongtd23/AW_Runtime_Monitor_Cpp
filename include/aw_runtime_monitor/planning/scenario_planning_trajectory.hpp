@@ -2,6 +2,7 @@
 #define SCENARIO_PLANNING_TRAJECTORY_HPP
 
 #include "aw_runtime_monitor/topic.hpp"
+#include "aw_runtime_monitor/planning/planning_trajectory.hpp"
 #include "autoware_planning_msgs/msg/trajectory.hpp"
 #include "aw_runtime_monitor/utils.hpp"
 
@@ -12,23 +13,20 @@ const std::string SCENARIO_PLTR_UNVERIFIED_TOPIC_NAME = SCENARIO_PLTR_TOPIC_NAME
 class ScenarioPlanningTrajectoryTopic : public Topic 
 {
 public:
-    ScenarioPlanningTrajectoryTopic();
+    ScenarioPlanningTrajectoryTopic(bool shielded=true) 
+        : Topic(shielded ? SCENARIO_PLTR_UNVERIFIED_TOPIC_NAME : SCENARIO_PLTR_TOPIC_NAME, SCENARIO_PLTR_MSG_TYPE_STR, false) {
+    }
     
     // Implement pure virtual functions from Topic
-    nlohmann::json msgToJson(const std::shared_ptr<rclcpp::SerializedMessage>& msg) override;
-    std::string traceKey() override;
+    nlohmann::json msgToJson(const std::shared_ptr<rclcpp::SerializedMessage>& msg) override {
+        nlohmann::json j;
+        return planningMsgToJson(msg);
+    }
+    std::string traceKey() override {
+        return ScenarioPlanningTrajectoryTopic::TRACE_KEY();
+    }
     static std::string TRACE_KEY() { return "scenario_planning_trajectory"; }
-};
-
-class UnverifiedScenarioPlanningTrajectoryTopic : public Topic 
-{
-public:
-    UnverifiedScenarioPlanningTrajectoryTopic();
-    
-    // Implement pure virtual functions from Topic
-    nlohmann::json msgToJson(const std::shared_ptr<rclcpp::SerializedMessage>& msg) override;
-    std::string traceKey() override;
-    static std::string TRACE_KEY() { return "scenario_planning_trajectory_unverified"; }
+    static std::string SHIELDED_TRACE_KEY() { return TRACE_KEY() + "_shielded"; }
 };
 
 #endif

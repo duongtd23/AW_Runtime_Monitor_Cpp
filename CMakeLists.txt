@@ -24,6 +24,7 @@ find_package(cv_bridge REQUIRED)
 find_package(image_transport REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(Eigen3 REQUIRED)
+find_package(autoware_route_handler REQUIRED)
 
 include_directories(include
   /usr/local/include
@@ -33,22 +34,17 @@ link_directories(
 )
 
 add_executable(monitor 
-  src/topic.cpp
-  src/planning/planning_trajectory.cpp
   src/planning/planning_shield.cpp
-  src/planning/scenario_planning_trajectory.cpp
+  src/planning/trajectory_revision.cpp
   src/planning/trajectory_manipulation.cpp
   src/groundtruth/groundtruth_kinematic.cpp
   src/groundtruth/groundtruth_size.cpp
   src/localization/estimated_kinematic.cpp
-  src/perception/perception_object.cpp
   src/perception/perception_shield.cpp
-  src/perception/boundingbox_perception_object.cpp
   src/control/control_command.cpp
   src/metadata/awsim_metadata.cpp
   src/recorder/aw_recorder.cpp
   src/aw_rt_monitor.cpp
-  src/utils.cpp
 )
 
 ament_target_dependencies(monitor
@@ -68,6 +64,8 @@ ament_target_dependencies(monitor
   cv_bridge
   image_transport
   OpenCV
+  autoware_route_handler
+  autoware_map_msgs
 )
 
 target_link_libraries(monitor

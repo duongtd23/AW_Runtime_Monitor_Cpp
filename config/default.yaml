@@ -1,6 +1,8 @@
 aw_recorder:
   ros__parameters:
-    # For recorder
+## ============================================================================
+## For recorder
+## ============================================================================
     topics:  # topics to be recorded
     - ControlCommand
     - GroundtruthKinematic
@@ -10,34 +12,73 @@ aw_recorder:
     - PerceptionObject
     - BoundingBoxPerceptionObject
     - PlanningTrajectory
-    # - UnverifiedPlanningTrajectory
     - CameraFootage
-  
-    # For planning shield
-    planning_shield_enabled: false
-    safety_formula: '[] (pathConfidence >= 0.1 /\ time <= 3.0 -> ~ collision)'
-    spec_syntax_file_path: 'formal_spec/syntax.maude'
-    
-    # Don't activate the shield if the ego speed is below this threshold
-    speed_threshold_activation: 3.0 # m/s
-    # maximum braking deceleration and jerk
-    min_acc: -7.0    # m/s2
-    min_jerk: -12.0  # m/s3
-    # the shield first tries to apply this braking force, then gradually increase it to reach their maximum configuration
-    acc_start_attempt: -4.0   # m/s2
-    jerk_start_attempt: -4.0  # m/s3
-    acc_increment: 1.5
-    jerk_increment: 4.0
-    # ignore the planning points behind this time bound
-    time_bound: 5.0  # seconds
-    #  Number of consecutive frames that must be evaluated as unsafe before activating the safety shield.
-    unsafe_confirmation_frames: 2
-    # Ignore perceived object if its distance to ego always greater than this threshold in all planning points
-    distance_bound: 20.0  # meters
 
-    # For perception shield
-    perception_shield_enabled: true
+## ============================================================================
+## For perception shield
+## ============================================================================
+    # perception_shield_enabled: true
     perception_spec: '[](x.(forall id@x. ((present(x+1, id)) -> present(x+2, id) )))'
     window_size: 3
     # Don't activate the shield if the ego speed is below this threshold
     speed_threshold_perp_shield_activation: 3.0 # m/s
+
+## ============================================================================
+## For planning shield
+## ============================================================================
+    # planning_shield_enabled: true 
+    planning_safety_spec: '[] (pathConfidence >= 0.1 /\ time <= 3.0 -> ~ collision)'
+    spec_syntax_file_path: 'formal_spec/syntax.maude'
+    
+    # Don't activate the shield if the ego speed is below this threshold
+    speed_threshold_activation: 3.0 # m/s
+    # ignore the planning points behind this time bound
+    time_bound: 10.0  # seconds
+    # Ignore perceived object if its distance to ego always greater than this threshold in all planning points
+    distance_bound: 80.0  # meters
+
+    # Number of consecutive frames that must be evaluated as unsafe before activating the safety shield.
+    # unsafe_confirmation_frames: 2
+
+    ## TrajectoryReviser config.
+    # to disable an option, comment it
+    revision_types: 
+    - deceleration
+    - lateral_shift
+    - combined
+    
+    ## Deceleration Profiles
+    # Each profile defines a level of deceleration intensity
+    # target_speed_ratio: 0.0 = full stop, 0.3 = reduce to 30% of current speed
+    # max_decel_ratio: ratio of ego_min_accel to use (0.4 = 40%, 1.0 = 100%)
+    # max_jerk_ratio: ratio of ego_min_jerk to use (0.4 = 40%, 1.0 = 100%)
+    # weight: lower values are tried first
+    revision_deceleration_profiles:
+      names: ["gentle_stop", "moderate_stop", "aggressive_stop"]
+      target_speed_ratios: [0.0, 0.0, 0.0]
+      max_decel_ratios: [0.5, 0.75, 1.0]
+      max_jerk_ratios: [0.5, 0.75, 1.0]
+      weights: [1.0, 2.0, 3.0]
+    
+    ## Lateral shift parameters
+    revision_lateral_shift:
+      offsets: [0.5, 1.0, 1.5]
+      weight_base: 5.0
+      weight_factor: 3.0
+    
+    ## Combined correction parameters (deceleration + lateral shift)
+    revision_combined:
+      # Indices of deceleration profiles to combine (0=gentle, 1=moderate, 2=aggressive)
+      decel_profile_indices: [1, 2]  # Use gentle, moderate, aggressive
+      # Lateral offsets for combined corrections (in meters)
+      lateral_offsets: [1.0, 1.5]
+      # Weight parameters for combined corrections
+      weight_base: 10.0
+      weight_factor: 2.0
+    
+    revision_smoothing_iterations: 5
+    revision_smoothing_weight: 0.3
+    revision_max_curvature: 1.0
+    revision_max_candidates: 50
+    revision_min_points: 30
+

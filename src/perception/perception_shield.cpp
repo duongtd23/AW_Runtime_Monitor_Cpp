@@ -8,7 +8,7 @@ std::map<int, tqtl::ObjectClass> class_map = {
     {2, tqtl::ObjectClass::Car},
     {3, tqtl::ObjectClass::Car},
     {4, tqtl::ObjectClass::Car},
-    {6, tqtl::ObjectClass::Cyclist},
+    {6, tqtl::ObjectClass::Bicycle},
     {7, tqtl::ObjectClass::Pedestrian}
 };
 

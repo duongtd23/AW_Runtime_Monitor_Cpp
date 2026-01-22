@@ -1,369 +1,28 @@
 #include <string>
+#include <set>
 #include "aw_runtime_monitor/planning/planning_shield.hpp"
 #include "aw_runtime_monitor/perception/perception_object.hpp"
-#include "aw_runtime_monitor/planning/planning_trajectory.hpp"
-#include "aw_runtime_monitor/localization/estimated_kinematic.hpp"
-#include "aw_runtime_monitor/groundtruth/groundtruth_size.hpp"
 #include "rclcpp/serialization.hpp"
-#include "rclcpp/rclcpp.hpp"
 #include "aw_runtime_monitor/utils.hpp"
-#include <chrono> // Required time measurement
-#include <spot/kripke/kripkegraph.hh>
-#include <spot/twaalgos/translate.hh>
-#include <spot/twaalgos/emptiness.hh>
 
-// for CLI interaction with Maude
-#include <unistd.h>
-#include <pty.h>
-#include <sys/wait.h>
-
-
-// PlanningPoint member methods
-PlanningPoint::PlanningPoint(const glm::vec2& _position, float _velocity, float _accel, 
-            float _time_to_next_point, float _time_from_start)
-    : position(_position), velocity(_velocity), accel(_accel), 
-      time_to_next_point(_time_to_next_point), time_from_start(_time_from_start) {
-}
-
-// ConstantHeadingVehicle member methods
-ConstantHeadingVehicle::ConstantHeadingVehicle(const nlohmann::json& vehicle_current_pose, double veh_length, double veh_width, double veh_center_x, double veh_center_y){
-    this->init_pos = glm::vec2(vehicle_current_pose["position"]["x"],
-                                vehicle_current_pose["position"]["y"]);
-    this->init_rot = vehicle_current_pose["rotation"]["z"];
-    this->init_vertices = (getEgoWorldVertices(this->init_pos, this->init_rot,
-                            glm::vec2(veh_length, veh_width),
-                            glm::vec2(veh_center_x, veh_center_y)));
-    // remember to change sign due to different convention
-    double heading_rad = -glm::radians(this->init_rot);
-    this->norm_vel_ = glm::vec2(std::cos(heading_rad), std::sin(heading_rad));
-}
-
-std::vector<glm::vec2> ConstantHeadingVehicle::getVerticesWhenAtPosition(const glm::vec2& position) const{
-    glm::vec2 direction = position - this->init_pos;
-    std::vector<glm::vec2> result;
-    result.reserve(this->init_vertices.size());
-    for (const auto& v : this->init_vertices) {
-        result.push_back(v + direction);
-    }
-    return result;
-}
-
-std::vector<glm::vec2> ConstantHeadingVehicle::getVerticesAtTime(float time, float speed){
-    glm::vec2 velocity = speed * this->norm_vel_;
-    std::vector<glm::vec2> result;
-    result.reserve(this->init_vertices.size());
-    for (const auto& v : this->init_vertices) {
-        result.push_back(v + time * velocity);
-    }
-    return result;
-}
-
-/**
- * Helper functions for PlanningTrajectory class
- */
-std::tuple<size_t, float> extractClosestPoint(const std::vector<autoware_planning_msgs::msg::TrajectoryPoint>& raw_points, const glm::vec2& current_pos) {
-    float min_dis = 1e9;
-    size_t _id = -1;
-    for (size_t i = 0; i < raw_points.size(); ++i) {
-        const auto& point = raw_points[i];
-        glm::vec2 nppoint = extractObjPosition(point);
-        float dis = glm::length(current_pos - nppoint);
-        if (dis < min_dis) {
-            _id = i;
-            min_dis = dis;
-        }
-    }
-    return std::make_tuple(_id, min_dis);
-}
-
-std::tuple<std::vector<glm::vec2>, std::vector<float>, std::vector<float>> getPosAndVels(const std::vector<autoware_planning_msgs::msg::TrajectoryPoint>& points_raw, size_t start_id=0) {
-    std::vector<glm::vec2> positions;
-    std::vector<float> long_vels;
-    std::vector<float> accels;
-    for (size_t i = start_id; i < points_raw.size(); ++i) {
-        const auto& point = points_raw[i];
-        if (point.lateral_velocity_mps > 0.1) {
-            throw std::runtime_error("Not handle case when lateral velocity > 0");
-        }
-        positions.push_back(glm::vec2(point.pose.position.x, point.pose.position.y));
-        long_vels.push_back(point.longitudinal_velocity_mps);
-        accels.push_back(point.acceleration_mps2);
-    }
-    return std::make_tuple(positions, long_vels, accels);
-}
-
-float deriveTimeStep(const glm::vec2& position0, float speed0, float accel0, 
-                    const glm::vec2& position1, float speed1, float accel1){
-    if (accel0 + accel1 == 0.0) {
-        if (speed0 + speed1 == 0.0) {
-            return 0.0;
-        }
-        return 2 * float(glm::length(position1 - position0)) / (speed0 + speed1);
-    }
-    float temp = 2 * (speed1 - speed0) / (accel0 + accel1);
-    if (temp < 0) {
-        return 2 * float(glm::length(position1 - position0)) / (speed0 + speed1);
-    }
-    return temp;
-}
-
-// PlanningTrajectory member methods
-PlanningTrajectory::PlanningTrajectory(const ConstantHeadingVehicle& _ego_current_state) 
-    : ego_current_state(_ego_current_state) {
-}
-PlanningTrajectory::PlanningTrajectory(const ConstantHeadingVehicle& _ego_current_state,
-        // const std::vector<PlanningPoint>& _past_points, 
-        size_t _start_point_id,
-        const std::vector<PlanningPoint>& _future_points) 
-    : ego_current_state(_ego_current_state) ,
-      start_point_id(_start_point_id),
-      future_points(_future_points) {
-}
-
-void PlanningTrajectory::parseFuturePoints(const std::vector<autoware_planning_msgs::msg::TrajectoryPoint>& points_raw) {
-    auto pva_tuple = getPosAndVels(points_raw);
-    std::vector<glm::vec2> positions = std::get<0>(pva_tuple);
-    std::vector<float> long_vels = std::get<1>(pva_tuple);
-    std::vector<float> accels = std::get<2>(pva_tuple);
-
-    this->future_points.clear();
-    float time_from_start = 0.0;
-    for (size_t i = 0; i < positions.size(); ++i) {
-        float time_step = timestamp(points_raw[i].time_from_start, false);
-        if (time_step == 0 && 1 <= i && i <= positions.size() - 2) {
-            time_step = deriveTimeStep(
-                positions[i], long_vels[i], accels[i], positions[i + 1], long_vels[i + 1], accels[i + 1]);
-        } else {
-            this->future_points.push_back(PlanningPoint(
-                positions[i], long_vels[i], accels[i], time_step, time_from_start
-            ));
-        }
-        time_from_start += time_step;
-    }
-}
-
-// extract planning trajectory
-void PlanningTrajectory::parseFuturePointsWithoutTimesteps(const std::vector<autoware_planning_msgs::msg::TrajectoryPoint>& points_raw, size_t start_id,
-        bool skip_tails){
-    auto pva_tuple = getPosAndVels(points_raw, start_id);
-    std::vector<glm::vec2> positions = std::get<0>(pva_tuple);
-    std::vector<float> long_vels = std::get<1>(pva_tuple);
-    std::vector<float> accels = std::get<2>(pva_tuple);
-
-    // this->future_points.clear();
-    float time_from_start = 0.0;
-    size_t bound = positions.size() - 1;
-    if (skip_tails) {
-        bound -= 2;
-    }
-    for (size_t i = 0; i < bound; ++i) {
-        float time_step = deriveTimeStep(
-            positions[i], long_vels[i], accels[i], positions[i + 1], long_vels[i + 1], accels[i + 1]);
-        if (time_step < 0) {
-            return;
-        }
-        this->future_points.push_back(PlanningPoint(
-            positions[i], long_vels[i], accels[i], time_step, time_from_start
-        ));
-        time_from_start += time_step;
-    }
-}
-
-void PlanningTrajectory::parsePastFuturePoints(const std::vector<autoware_planning_msgs::msg::TrajectoryPoint>& points_raw){
-    glm::vec2 init_pos = this->ego_current_state.init_pos;
-
-    // find point entry in points_raw that has position closest to current position of Ego
-    // because the planning trajectory also includes some previous positions
-    auto point_tuple = extractClosestPoint(points_raw, init_pos);
-    size_t _id = std::get<0>(point_tuple);
-
-    float current_vel = points_raw[_id].longitudinal_velocity_mps;
-    while (current_vel > 0 && _id < points_raw.size() - 1) {
-        glm::vec2 pos = extractObjPosition(points_raw[_id]);
-        glm::vec2 next_pos = extractObjPosition(points_raw[_id + 1]);
-        if (glm::length(pos - next_pos) / current_vel > 0.05) {
-            break;
-        }
-        _id += 1;
-    }
-    this->start_point_id = _id;
-    this->parseFuturePointsWithoutTimesteps(points_raw, _id);
-}
-
-// PlanningShield member methods
-PlanningTrajectory PlanningShield::toPlanningTrajectoryObj(const autoware_planning_msgs::msg::Trajectory& trajectory_msg, 
-        const nlohmann::json& estimated_kinematic, const nlohmann::json& ego_shape){
-    float ego_length = ego_shape["size"]["x"];
-    float ego_width = ego_shape["size"]["y"];
-    float ego_center_x = ego_shape["center"]["x"];
-    float ego_center_y = ego_shape["center"]["y"];
-    
-    ConstantHeadingVehicle ego_current_state = ConstantHeadingVehicle(
-        estimated_kinematic["pose"], ego_length, ego_width,
-        ego_center_x, ego_center_y);
-
-    PlanningTrajectory planning_points = PlanningTrajectory(ego_current_state);
-    planning_points.parsePastFuturePoints(trajectory_msg.points);
-    return planning_points;
-}
-
-
-/**
- * Helper functions for PlanningShield class
- */
-// Send a Maude command
-void sendCommand(int fd, const std::string& cmd) {
-    std::string full_cmd = cmd + "\n";
-    write(fd, full_cmd.c_str(), full_cmd.size());
-}
-// Wait until a specific prompt string appears in the Maude output
-bool waitForPrompt(int fd, const std::string& prompt, std::string* captured_output = nullptr) {
-    std::string buffer;
-    char ch;
-    while (read(fd, &ch, 1) > 0) {
-        buffer += ch;
-        if (buffer.size() >= prompt.size() &&
-            buffer.compare(buffer.size() - prompt.size(), prompt.size(), prompt) == 0) {
-            if (captured_output)
-                *captured_output = buffer;
-            return true;
-        }
-    }
-    return false;
-}
-
-/**
- * Rename formula via Maude CLI
- * E.g.,
- * Return a vector of string, the first one is the renamed formula, and
- * the rest are the renamed propositions.
- */
-std::vector<std::string> renameFormula(const std::string& formula_str, 
-        const std::string& spec_syntax_file_path) {
-    int master_fd;
-    pid_t pid = forkpty(&master_fd, nullptr, nullptr, nullptr);
-
-    if (pid == 0) {
-        // Child process: execute Maude
-        execlp("maude", "maude", (char*)nullptr);
-        perror("execlp failed");
-        return {};
-    }
-
-    // Parent process
-    if (!waitForPrompt(master_fd, "Maude>")) {
-        std::cerr << "Failed to start Maude." << std::endl;
-        return {};
-    }
-    sendCommand(master_fd, "load " + spec_syntax_file_path);
-
-    if (!waitForPrompt(master_fd, "Maude>")) {
-        std::cerr << "Failed to load model." << std::endl;
-        return {};
-    }
-
-    // std::cout << "\n[Model loaded successfully]\n";
-    sendCommand(master_fd, "red rename(" + formula_str + ") .");
-
-    std::string reduction_output;
-    std::vector<std::string> result = {};
-    if (waitForPrompt(master_fd, "Maude>", &reduction_output)) {
-        // std::cout << "\n=== Reduction Output ===\n";
-        size_t pos = reduction_output.find("Maude>");
-        if (pos != std::string::npos)
-            reduction_output.erase(pos);
-        // std::cout << reduction_output << std::endl;
-        std::string result_str = extractResultFromOutput(reduction_output);
-        if (result_str == "") {
-            std::cerr << "A syntax error with formula: " << formula_str << std::endl;
-            std::cerr << "Reduction output from Maude:\n" << reduction_output << std::endl;
-        }
-        else {
-            result = toVectorString(result_str);
-        }
-        // std::cout << "\n[Extracted Result]:" << result << std::endl;
-    } else {
-        std::cerr << "No reduction result captured." << std::endl;
-    }
-
-    // Quit Maude
-    sendCommand(master_fd, "quit");
-    waitpid(pid, nullptr, 0);
-    return result;
-}
-
-std::vector<autoware_planning_msgs::msg::TrajectoryPoint> mergePoints(
-        const std::vector<autoware_planning_msgs::msg::TrajectoryPoint>& v1,
-        size_t range,
-        const std::vector<autoware_planning_msgs::msg::TrajectoryPoint>& v2) {
-    std::vector<autoware_planning_msgs::msg::TrajectoryPoint> result;
-    result.insert(result.end(), v1.begin(), v1.begin() + std::min(range, v1.size()));
-    result.insert(result.end(), v2.begin(), v2.end());
-    return result;
-}
-
-/**
- * Find the latest perception object with id $object_id.
- * The returned object must be in the entry with index < $bounded_entry_id
- */
-std::tuple<nlohmann::json, float> findLatestPerpObj(const nlohmann::json& perception_msgs, 
-        const std::string& object_id, size_t bounded_entry_id) {
-    for (size_t i = bounded_entry_id - 1; i < perception_msgs.size(); --i) {
-        const auto& perp_entry = perception_msgs[i];
-        for (const auto& obj : perp_entry["objects"]) {
-            if (obj["id"] == object_id)
-                return std::make_tuple(obj, perp_entry["timestamp"]);
-        }
-    }
-    return std::make_tuple(nlohmann::json{}, 0.0);
-}
-glm::vec2 correctVelocity(const nlohmann::json& perception_msgs,
-        const glm::vec2& current_pos, float current_time,
-        const std::string& object_id, size_t bounded_entry_id,
-        size_t lookback_steps=2) {
-    glm::vec2 prev_position;
-    float time = 0.0;
-    size_t steps = 0;
-    for (size_t i = bounded_entry_id - 1; i < perception_msgs.size(); --i) {
-        const auto& perp_entry = perception_msgs[i];
-        for (const auto& obj : perp_entry["objects"]) {
-            if (obj["id"] == object_id) {
-                prev_position = jsonPointToVector2(obj["pose"]["position"]);
-                time = perp_entry["timestamp"];
-                steps++;
-            }
-        }
-        if (steps >= lookback_steps) break;
-    }
-
-    float dt = current_time - time;
-    if (steps < lookback_steps || dt >= 0.6f) {
-        return glm::vec2{0.0, 0.0};
-    }
-    return (current_pos - prev_position) / dt;
-}
+#include "autoware/route_handler/route_handler.hpp"
 
 /**
  * PlanningShield member methods
  */
 PlanningShield::PlanningShield(
-        rclcpp::Publisher<autoware_planning_msgs::msg::Trajectory>::SharedPtr verified_trajectory_publisher,
-        rclcpp::Publisher<autoware_planning_msgs::msg::Trajectory>::SharedPtr verified_motion_velocity_publisher,
-        std::string spec_formula_str, std::string spec_syntax_file_path,
-        float speed_threshold_activation, float min_acc, float min_jerk,
-        float acc_start_attempt, float jerk_start_attempt,
-        float acc_increment, float jerk_increment,
-        float time_bound,
-        int unsafe_confirmation_frames, float distance_bound)
-    : verified_trajectory_publisher_(verified_trajectory_publisher),
-      verified_motion_velocity_publisher_(verified_motion_velocity_publisher),
-      spec_syntax_file_path_(spec_syntax_file_path),
+        const std::string& spec_formula_str, const std::string& spec_syntax_file_path,
+        float speed_threshold_activation, float time_bound, float distance_bound,
+        const RevisionConfig& revision_config)
+    : spec_syntax_file_path_(spec_syntax_file_path),
       speed_threshold_activation_(speed_threshold_activation), 
-      min_acc_(min_acc), min_jerk_(min_jerk), acc_start_attempt_(acc_start_attempt),
-      jerk_start_attempt_(jerk_start_attempt), acc_increment_(acc_increment),
-      jerk_increment_(jerk_increment), time_bound_(time_bound),
-      unsafe_confirmation_frames_(unsafe_confirmation_frames), distance_bound_(distance_bound) {
-    
+      time_bound_(time_bound), distance_bound_(distance_bound),
+      logger_(rclcpp::get_logger("planning_shield")) {
+
+    drivable_area_checker_ = ExternalDrivableAreaChecker();
+    cached_bdd_dict_ = spot::make_bdd_dict();
+    trajectory_reviser_ = TrajectoryReviser(revision_config, logger_);
+
     // the first element is the renamed formula, the rest are the renamed propositions
     std::vector<std::string> renamed_spec_props = renameFormula(spec_formula_str, spec_syntax_file_path);
     if (renamed_spec_props.empty()) {
@@ -420,10 +79,6 @@ PlanningShield::PlanningShield(
     for (const std::string& p : this->propositions_) {
         std::cout << "Proposition: " << p << std::endl;
     }
-    // std::cout << this->proposition_map_.size() << std::endl;
-    // for (const auto& [key, _] : this->proposition_map_) {
-    //     std::cout << "Mapped proposition: " << key << std::endl;
-    // }
 
     try {
         this->spec_formula_ = spot::parse_infix_psl(renamed_spec_formula_str);
@@ -434,338 +89,423 @@ PlanningShield::PlanningShield(
     }
 }
 
-void PlanningShield::intervene(const autoware_planning_msgs::msg::Trajectory& planning_msg, 
-        const nlohmann::json& recorded_data) {
-    auto start_time = std::chrono::high_resolution_clock::now();
-
-    if (recorded_data[PerceptionObjectTopic::TRACE_KEY()].empty() ||
-        recorded_data[EstimatedKinematicTopic::TRACE_KEY()].empty() ||
+/**
+ * @brief Verify the planned trajectory against the safety specification, using the detected objects from recorded data
+ * @param planning_msg The planned trajectory message
+ * @param recorded_data The recorded data containing estimated kinematic and perception objects
+ * @return true if the trajectory is safe, false otherwise
+ */
+PlanningShield::VerificationResult PlanningShield::verify(const autoware_planning_msgs::msg::Trajectory& planning_msg, 
+        const nlohmann::json& recorded_data,
+        bool enable_revision) {
+    // auto start_time = std::chrono::high_resolution_clock::now();
+    
+    if (recorded_data.find(EstimatedKinematicTopic::TRACE_KEY()) == recorded_data.end() ||
+        recorded_data.at(EstimatedKinematicTopic::TRACE_KEY()).empty() ||
+        recorded_data.find(PerceptionObjectTopic::TRACE_KEY()) == recorded_data.end() ||
+        recorded_data.at(PerceptionObjectTopic::TRACE_KEY()).empty() ||
         !recorded_data.contains(GroundtruthSizeTopic::TRACE_KEY())) {
-        this->verified_trajectory_publisher_->publish(planning_msg);
-        return;
+            latest_verification_result_ = {true, false, planning_msg};
+            return {true, false, planning_msg}; // assume safe if no data
     }
-    // cache ego shape
-    if (this->ego_shape_.empty()) {
-        auto gtsize = recorded_data[GroundtruthSizeTopic::TRACE_KEY()];
-        if (!gtsize.contains("vehicle_sizes")) {
-            this->verified_trajectory_publisher_->publish(planning_msg);
-            return;
+    const nlohmann::json& estimated_kinematic = recorded_data[EstimatedKinematicTopic::TRACE_KEY()].back();
+    auto current_pose = estimated_kinematic["pose"];
+    glm::vec3 current_position = jsonPointToVector3(current_pose["position"]);
+    // glm::vec3 current_eulerangles = jsonPointToVector3(current_pose["rotation"]); // angles in degrees
+    // std::cout << "[DEBUG] Current Ego Position: (" 
+    //           << current_position.x << ", " 
+    //           << current_position.y << ", " 
+    //           << current_position.z << ")" << std::endl;
+
+    auto id_dis = extractClosestPoint(planning_msg.points, glm::vec2(current_position.x, current_position.y));
+
+    // only consider trajectory points ahead of the ego vehicle's current position
+    size_t closest_point_id = std::get<0>(id_dis);
+
+    // Extract Ego shape
+    float ego_length = 0.0f, ego_width = 0.0f, ego_center_x = 0.0f, ego_center_y = 0.0f;
+    auto gtsize = recorded_data[GroundtruthSizeTopic::TRACE_KEY()];
+    for (const auto& entry : gtsize["vehicle_sizes"]) {
+        if (entry["name"] == "ego") {
+            ego_length = entry["size"]["x"];
+            ego_width = entry["size"]["y"];
+            ego_center_x = entry["center"]["x"];
+            ego_center_y = entry["center"]["y"];
+            break;
         }
-        for (const auto& entry : gtsize["vehicle_sizes"]) {
-            if (entry["name"] == "ego") {
-                this->ego_shape_ = entry;
+    }
+    glm::vec2 ego_size(ego_length, ego_width);
+    glm::vec2 ego_center_offset(ego_center_x, ego_center_y);
+
+    auto internal_result = doVerify(
+        planning_msg,
+        recorded_data,
+        closest_point_id,
+        ego_size,
+        ego_center_offset);
+    
+    bool is_safe = internal_result.is_safe;
+    std::vector<size_t> collision_indices = internal_result.collision_indices;
+    
+    if (is_safe) {
+        latest_verification_result_ = {true, false, planning_msg};
+        return {true, false, planning_msg};
+    }
+    
+    // Violation found - attempt trajectory revision
+    RCLCPP_INFO(logger_, "Safety violation detected with %zu collision points.", collision_indices.size());
+
+    if (!enable_revision) {
+        RCLCPP_INFO(logger_, "Revision disabled. Returning original trajectory.");
+        latest_verification_result_ = {false, false, planning_msg};
+        return {false, false, planning_msg};
+    }
+
+    // Cache drivable area for the current pose
+    geometry_msgs::msg::Pose ego_pose;
+    ego_pose.position.x = current_position.x;
+    ego_pose.position.y = current_position.y;
+    ego_pose.position.z = current_position.z;
+    drivable_area_checker_.cacheCurrentDrivableArea(ego_pose);
+
+    // Create verify function for the reviser
+    auto verify_func = [this, &recorded_data, closest_point_id, &ego_size, &ego_center_offset](const autoware_planning_msgs::msg::Trajectory& traj) -> bool {
+        // Re-verify the trajectory
+        auto result = this->doVerify(traj, recorded_data, closest_point_id, ego_size, ego_center_offset);
+        return result.is_safe;
+    };
+
+    // Attempt revision
+    RevisionResult revision_result = trajectory_reviser_.revise(
+        planning_msg,
+        collision_indices,
+        drivable_area_checker_,
+        verify_func,
+        closest_point_id,
+        ego_size,
+        ego_center_offset
+    );
+    
+    if (revision_result.success) {
+        RCLCPP_INFO(logger_, "Successfully revised trajectory (%s)", revision_result.applied_candidate.toString().c_str());
+        latest_verification_result_ = {false, true, revision_result.trajectory};
+        return {false, true, revision_result.trajectory};
+    } else {
+        // RCLCPP_ERROR(logger_, "Failed to find safe trajectory revision");
+        latest_verification_result_ = {false, false, planning_msg};
+        return {false, false, planning_msg};
+    }
+}
+
+/**
+ * @brief Internal verification that returns collision information
+ */
+PlanningShield::InternalVerificationResult PlanningShield::doVerify(
+        const autoware_planning_msgs::msg::Trajectory& planning_msg,
+        const nlohmann::json& recorded_data,
+        size_t closest_point_id,
+        // const glm::vec3& current_position, // current ego position
+        const glm::vec2& ego_size,
+        const glm::vec2& ego_center_offset) {
+
+    // Compute timestamps for each trajectory point (starting from closest_point_id)
+    std::vector<float> trajectory_timestamps;
+    std::vector<glm::vec2> trajectory_positions;
+    std::vector<float> trajectory_headings;  // in degrees
+    std::vector<float> trajectory_z_values;
+
+    float cumulative_time = 0.0f;
+    for (size_t i = closest_point_id; i < planning_msg.points.size(); ++i) {
+        const auto& point = planning_msg.points[i];
+        
+        if (i > closest_point_id) {
+            const auto& prev_point = planning_msg.points[i - 1];
+            glm::vec2 pos_prev = extractObjPosition(prev_point);
+            glm::vec2 pos_curr = extractObjPosition(point);
+            float speed_prev = std::sqrt(prev_point.longitudinal_velocity_mps * prev_point.longitudinal_velocity_mps +
+                                         prev_point.lateral_velocity_mps * prev_point.lateral_velocity_mps);
+            float speed_curr = std::sqrt(point.longitudinal_velocity_mps * point.longitudinal_velocity_mps +
+                                         point.lateral_velocity_mps * point.lateral_velocity_mps);
+            if (speed_prev < 0.01) {
                 break;
             }
+            float accel_prev = prev_point.acceleration_mps2;
+            float accel_curr = point.acceleration_mps2;
+            
+            float dt = deriveTimeStep(pos_prev, speed_prev, accel_prev, pos_curr, speed_curr, accel_curr);
+            cumulative_time += dt;
         }
-        if (this->ego_shape_.empty()) {
-            this->verified_trajectory_publisher_->publish(planning_msg);
-            return;
+        
+        // Stop if beyond time bound
+        if (cumulative_time > time_bound_) {
+            break;
         }
-    }
-    double current_time = timestamp(planning_msg.header.stamp);
-    bool safe = true;
-    if (getCurrentSpeed(recorded_data) >= this->speed_threshold_activation_) {
-        const nlohmann::json& perception_msgs = recorded_data[PerceptionObjectTopic::TRACE_KEY()];
-        const nlohmann::json& estimated_kinematic = recorded_data[EstimatedKinematicTopic::TRACE_KEY()].back();
-
-        // verify the safety
-        PlanningTrajectory planning_points = this->toPlanningTrajectoryObj(planning_msg, estimated_kinematic,this->ego_shape_);
-        safe = this->verify(planning_points, perception_msgs);
-        if (!safe) {
-            if (isRecentlyAllUnsafe()) {
-            std::cout << "Unsafe planning trajectory. Replace with a safe one..." << std::endl;
-            std::vector<autoware_planning_msgs::msg::TrajectoryPoint> new_trajectory_points = 
-                this->resampleTrajectoryPoints(
-                    planning_msg, 
-                    planning_points.start_point_id, 
-                    perception_msgs,
-                    planning_points.ego_current_state);
-            autoware_planning_msgs::msg::Trajectory new_trajectory_msg;
-            new_trajectory_msg.header = planning_msg.header;
-            new_trajectory_msg.points = new_trajectory_points;
-
-            this->verified_trajectory_publisher_->publish(new_trajectory_msg);
-
-            auto end_time =  std::chrono::high_resolution_clock::now();
-            verification_times_.push_back(std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count());
-
-            // validate in the last planning point, the vehicle's speed is 0
-            if (std::abs(new_trajectory_points.back().longitudinal_velocity_mps) > 1e-4) {
-                std::cerr << "[ERROR] The last point of revised trajectory does not have speed 0" << std::endl;
-            }
-            this->stop_point_ = extractObjPosition(new_trajectory_points.back());
-            this->has_stop_point_ = true;
-            this->last_stop_time_ = current_time;
-            }
-            else {
-                this->verified_trajectory_publisher_->publish(planning_msg);
-            }
-        }
-    } 
-    if (safe) {
-        // if safe, publish the trajectory
-        this->verified_trajectory_publisher_->publish(planning_msg);
-        if (this->has_stop_point_ && current_time >= this->last_stop_time_ + 4.0) {
-            // reset
-            std::cout << "Restart moving..." << std::endl;
-            this->has_stop_point_ = false;
-            this->last_stop_time_ = 1e20;
-        }
-    }
-    this->insertSafetyEvaluation(safe);
-}
-
-void PlanningShield::interveneMotionVelocityMsg(const autoware_planning_msgs::msg::Trajectory& trajectory_msg) {
-    if (this->has_stop_point_) {
-        autoware_planning_msgs::msg::Trajectory new_msg = 
-            injectMotionVelocityTrajectory(trajectory_msg, this->stop_point_);
-        this->verified_motion_velocity_publisher_->publish(new_msg);
-    } else {
-        this->verified_motion_velocity_publisher_->publish(trajectory_msg);
-    }
-}
-
-bool PlanningShield::verify(const PlanningTrajectory& planning_points, 
-        const nlohmann::json& perception_msgs){
-    auto latest_perception_msg = perception_msgs.back();
-    if (latest_perception_msg["objects"].empty()) {
-        return true;
+        
+        trajectory_timestamps.push_back(cumulative_time);
+        trajectory_positions.push_back(extractObjPosition(point));
+        trajectory_z_values.push_back(point.pose.position.z);
+        
+        // Extract heading (yaw) from quaternion
+        auto euler = quaternionToEulerAngles(point.pose.orientation);
+        trajectory_headings.push_back(static_cast<float>(euler[2]));  // yaw in degrees
     }
 
-    for (const auto& perceived_obj : latest_perception_msg["objects"]) {
-        auto current_pose = perceived_obj["pose"];
-        float current_heading = current_pose["rotation"]["z"];
-        // auto current_vel = jsonPointToVector2(perceived_obj["twist"]["linear"]);
-        auto current_position = jsonPointToVector2(current_pose["position"]);
-        float existence_prob = perceived_obj["existence_prob"];
-        float current_time = latest_perception_msg["timestamp"];
-        std::string npc_id = perceived_obj["id"];
+    if (trajectory_positions.empty()) {
+        return {true, {}}; // no trajectory points to verify
+    }
 
-        // float distance_to_ego = glm::length(
-        //     current_position - planning_points.ego_current_state.init_pos);
-        // if (distance_to_ego > 20.0 && distance_to_ego / 
-        //     glm::length(current_vel + glm::vec2(1e-6, 1e-6)) > 10.0) {
-            //std::cout << "Skip far away NPC " << npc_id << std::endl;
-        //     continue;
-        // }
-
-        // perceived object dimension
-        std::vector<glm::vec2> npc_local_vertices;
-        if (perceived_obj["shape"]["type"] == "box") {
-            float length = perceived_obj["shape"]["size"]["x"];
-            float width = perceived_obj["shape"]["size"]["y"];
-            npc_local_vertices = std::vector<glm::vec2> {
+    // Get the latest perception data
+    const nlohmann::json& perception_data = recorded_data[PerceptionObjectTopic::TRACE_KEY()].back();
+    
+    // Iterate over each detected object
+    for (const auto& obj : perception_data["objects"]) {
+        float existence_prob = obj["existence_prob"];
+        
+        // Get object's current position and check initial distance
+        glm::vec2 obj_current_pos = jsonPointToVector2(obj["pose"]["position"]);
+        // float obj_z = obj["pose"]["position"]["z"];
+        float initial_distance = glm::length(trajectory_positions[0] - obj_current_pos);
+        
+        // Skip objects that are too far away
+        if (initial_distance > distance_bound_) {
+            continue;
+        }
+        
+        // Get object heading
+        // float obj_heading = obj["pose"]["rotation"]["z"];  // yaw in degrees
+        
+        // Get object's local vertices based on shape
+        std::vector<glm::vec2> obj_local_vertices;
+        if (obj["shape"]["type"] == "box") {
+            float length = obj["shape"]["size"]["x"];
+            float width = obj["shape"]["size"]["y"];
+            obj_local_vertices = {
                 glm::vec2(length / 2, width / 2),
                 glm::vec2(-length / 2, width / 2),
                 glm::vec2(-length / 2, -width / 2),
                 glm::vec2(length / 2, -width / 2),
             };
-        } else if (perceived_obj["shape"]["type"] == "polygon") {
-            for (const auto& point : perceived_obj["shape"]["footprint"]) {
-                npc_local_vertices.push_back(glm::vec2(point["x"], point["y"]));
+        } else if (obj["shape"]["type"] == "polygon") {
+            for (const auto& pt : obj["shape"]["footprint"]) {
+                obj_local_vertices.push_back(glm::vec2(pt["x"], pt["y"]));
             }
-        }
-
-        glm::vec2 cal_vel = correctVelocity(perception_msgs,
-                                            current_position,
-                                            current_time,
-                                            npc_id,
-                                            perception_msgs.size() - 1,
-                                            1);
-
-        if (cal_vel[0] == 0.0f && cal_vel[1] == 0.0f) {
-            // std::cout << "Does not have enough data to determine velocity for NPC " << std::endl;
         } else {
-            if (!this->verifySimulatedNpcPath(planning_points,
-                                    existence_prob,
-                                    current_position, current_heading,
-                                    cal_vel, npc_local_vertices)) {
-                return false;
-            }
+            // Cylinder or unsupported shape - skip
+            continue;
         }
-        // if (!this->verifySimulatedNpcPath(planning_points,
-        //                     existence_prob,
-        //                     current_position, current_heading,
-        //                     current_vel, npc_local_vertices)) {
-        //     return false;
+
+        // Get object's current heading (kept constant for simulated path)
+        // float obj_heading = obj["pose"]["rotation"]["z"];  // yaw in degrees
+        // float obj_z = obj["pose"]["position"]["z"];
+
+        // Compute velocity from historical data for simulated path
+        // float current_time = perception_data["timestamp"];
+        // std::string npc_id = obj["id"];
+        // glm::vec2 cal_vel = correctVelocity(recorded_data[PerceptionObjectTopic::TRACE_KEY()],
+        //                             obj_current_pos,
+        //                             current_time,
+        //                             npc_id,
+        //                             recorded_data[PerceptionObjectTopic::TRACE_KEY()].size() - 1,
+        //                             1);
+        
+        // // Verify with simulated path (constant velocity assumption)
+        // // Only check if we have valid velocity data (non-zero)
+        // if (cal_vel.x != 0.0f || cal_vel.y != 0.0f) {
+        //     std::vector<float> sim_timestamp_series;
+        //     std::vector<bool> sim_collision_series;
+        //     std::vector<float> sim_distance_series;
+        //     // Track collision information for potential trajectory revision
+        //     std::vector<size_t> collision_indices;
+            
+        //     for (size_t i = 0; i < trajectory_timestamps.size(); ++i) {
+        //         float t = trajectory_timestamps[i];
+        //         glm::vec2 ego_pos = trajectory_positions[i];
+        //         float ego_heading = trajectory_headings[i];
+        //         float ego_z = trajectory_z_values[i];
+                
+        //         // Simulate NPC position assuming constant velocity
+        //         glm::vec2 npc_pos = obj_current_pos + cal_vel * t;
+                
+        //         // Compute distance
+        //         float distance = glm::length(ego_pos - npc_pos);
+                
+        //         // Check z-value difference (only consider collision if on same level)
+        //         bool same_z_level = std::abs(ego_z - obj_z) < 3.0f;
+                
+        //         // Compute collision
+        //         bool collision = false;
+        //         if (same_z_level) {
+        //             std::vector<glm::vec2> ego_vertices = getEgoWorldVertices(
+        //                 ego_pos, ego_heading, ego_size, ego_center_offset);
+        //             std::vector<glm::vec2> npc_vertices = getObjectWorldVertices(
+        //                 npc_pos, obj_heading, obj_local_vertices);
+        //             collision = isCollision(ego_vertices, npc_vertices);
+        //         }
+                
+        //         sim_timestamp_series.push_back(t);
+        //         sim_collision_series.push_back(collision);
+        //         sim_distance_series.push_back(distance);
+                
+        //         // Track collision indices for trajectory revision
+        //         if (collision) {
+        //             collision_indices.push_back(i + closest_point_id);
+        //         }
+        //     }
+            
+        //     // Verify safety specification for simulated path (use confidence = 1.0 for simulated path)
+        //     if (!evaluateSpec(sim_timestamp_series, sim_collision_series, sim_distance_series, existence_prob, 1.0f)) {
+        //         return {false, collision_indices};
+        //     }
         // }
-
-        for (size_t i = 0; i < perceived_obj["predict_paths"].size(); ++i) {
-            const auto& predicted_path = perceived_obj["predict_paths"][i];
-            if (!this->verifyPredictNpcPath(planning_points,
-                            existence_prob, predicted_path,
-                            current_heading, npc_local_vertices)) {
-                return false;
+        
+        // Iterate over each predicted path of this object
+        for (const auto& predicted_path : obj["predict_paths"]) {
+            float path_confidence = predicted_path["confidence"];
+            float npc_time_step = predicted_path["time_step"];
+            const auto& path_points = predicted_path["path"];
+            
+            if (path_points.empty()) {
+                continue;
+            }
+            
+            std::vector<float> timestamp_series;
+            std::vector<bool> collision_series;
+            std::vector<float> distance_series;
+            // Track collision information for potential trajectory revision
+            std::vector<size_t> collision_indices;
+            
+            // For each ego trajectory point, interpolate object position and check collision
+            for (size_t i = 0; i < trajectory_timestamps.size(); ++i) {
+                float t = trajectory_timestamps[i];
+                glm::vec2 ego_pos = trajectory_positions[i];
+                float ego_heading = trajectory_headings[i];
+                float ego_z = trajectory_z_values[i];
+                
+                // Compute which segment of the predicted path corresponds to time t
+                size_t path_index = static_cast<size_t>(t / npc_time_step);
+                float remainder_time = t - path_index * npc_time_step;
+                
+                // Check if we have enough path points
+                if (path_index >= path_points.size() - 1) {
+                    // Use the last path point
+                    path_index = path_points.size() - 2;
+                    if (path_points.size() < 2) {
+                        break;
+                    }
+                }
+                
+                // Interpolate object position
+                const auto& npc_point0 = path_points[path_index];
+                const auto& npc_point1 = path_points[path_index + 1];
+                
+                glm::vec2 npc_pos0 = jsonPointToVector2(npc_point0["position"]);
+                glm::vec2 npc_pos1 = jsonPointToVector2(npc_point1["position"]);
+                float npc_z0 = npc_point0["position"]["z"];
+                float npc_z1 = npc_point1["position"]["z"];
+                
+                float interp_factor = remainder_time / npc_time_step;
+                glm::vec2 npc_pos = npc_pos0 + interp_factor * (npc_pos1 - npc_pos0);
+                float npc_z = npc_z0 + interp_factor * (npc_z1 - npc_z0);
+                
+                // Interpolate object heading
+                float npc_heading0 = npc_point0["rotation"]["z"];
+                float npc_heading1 = npc_point1["rotation"]["z"];
+                float npc_heading = npc_heading0 + interp_factor * (npc_heading1 - npc_heading0);
+                
+                // Compute distance
+                float distance = glm::length(ego_pos - npc_pos);
+                
+                // Check z-value difference (only consider collision if on same level)
+                bool same_z_level = std::abs(ego_z - npc_z) < 3.0f;
+                
+                // Compute collision
+                bool collision = false;
+                if (same_z_level) {
+                    std::vector<glm::vec2> ego_vertices = getEgoWorldVertices(
+                        ego_pos, ego_heading, ego_size, ego_center_offset);
+                    std::vector<glm::vec2> npc_vertices = getObjectWorldVertices(
+                        npc_pos, npc_heading, obj_local_vertices);
+                    collision = isCollision(ego_vertices, npc_vertices);
+                }
+                
+                timestamp_series.push_back(t);
+                collision_series.push_back(collision);
+                distance_series.push_back(distance);
+                
+                // Track collision indices for trajectory revision
+                if (collision) {
+                    collision_indices.push_back(i + closest_point_id);
+                }
+            }
+            
+            // Verify safety specification
+            if (!evaluateSpec(timestamp_series, collision_series, distance_series, 
+                              existence_prob, path_confidence)) {
+                // std::cout << "[DEBUG] Object Predicted Path Points (x,y):" << std::endl;
+                // for (const auto& pt : path_points) {
+                //     std::cout << "  (" << pt["position"]["x"] << ", " << pt["position"]["y"] << "), " << std::endl;
+                // }
+                return {false, collision_indices};
             }
         }
     }
-    return true;
+    return {true, {}};
 }
 
-bool PlanningShield::verifySimulatedNpcPath(const PlanningTrajectory& planning_points,
-                                float existence_prob, const glm::vec2& current_position, float current_heading,
-                                const glm::vec2& current_vel, const std::vector<glm::vec2>& npc_local_vertices) {
-    /**
-     * Assume the NPC keep going with given (current) velocity.
-     * Simulate the path and check the safety.
-     */
-    std::vector<float> time_series;
-    std::vector<bool> collision_series;
-    std::vector<float> distance_series;
-    float last_time = -10.0;
-    bool too_far = true;
-    for (const auto& ego_point : planning_points.future_points) {
-        // Ego
-        float time_from_start = ego_point.time_from_start;
-        if (time_from_start > this->time_bound_) {
-            break;
-        }
+std::optional<autoware_planning_msgs::msg::Trajectory> PlanningShield::handleScenarioPlanningTrajectory(
+        const autoware_planning_msgs::msg::Trajectory& scenario_planning_trajectory,
+        const nlohmann::json& /*recorded_data*/) {
 
-        bool skip_cond1 = time_from_start > 0.0 &&
-                        time_from_start <= 1.0 &&
-                        time_from_start - last_time <= 0.5;
-        bool skip_cond2 = time_from_start >= 1.0 &&
-                        time_from_start - last_time <= 0.2;
-
-        if (skip_cond1 || skip_cond2) {
-            continue;
-        }
-
-        glm::vec2 planning_position = ego_point.position;
-        std::vector<glm::vec2> ego_plan_vertices = (
-            planning_points.ego_current_state.getVerticesWhenAtPosition(planning_position));
-        time_series.push_back(time_from_start);
-
-        // NPC
-        glm::vec2 npc_position = current_position + current_vel * time_from_start;
-        std::vector<glm::vec2> npc_vertices = getObjectWorldVertices(
-            npc_position,
-            current_heading,
-            npc_local_vertices
-        );
-        collision_series.push_back(isCollision(ego_plan_vertices, npc_vertices));
-        float dis = glm::length(planning_position - npc_position);
-        if (too_far && dis <= this->distance_bound_) {
-            too_far = false;
-        }
-        distance_series.push_back(dis);
-    }
-    // if the object is too far away (w.r.t. all points), skip the evaluation.
-    // note that this must be evaluated with all points, not only the starting point.
-    if (too_far) {
-        return true;
-    }
-    return this->evaluateSpec(time_series, collision_series, distance_series, existence_prob, 1.0);
-}
-
-bool PlanningShield::verifyPredictNpcPath(const PlanningTrajectory& planning_points,
-                              float existence_prob, const nlohmann::json& predicted_path, float current_heading, const std::vector<glm::vec2>& npc_local_vertices) {
-    /**
-    * Construct the transitions from a predicted path.
-    */
-    float npc_path_time_step = predicted_path["time_step"];
-    if (planning_points.future_points.empty()) {
-        return true;
-    }
-    if (npc_path_time_step < planning_points.future_points[0].time_to_next_point) {
-        std::cout << "[ERROR] Not handled NPC path time step smaller than "
-                  << planning_points.future_points[0].time_to_next_point << std::endl;
-        return true;
-    }
-
-    std::vector<float> time_series;
-    std::vector<bool> collision_series;
-    std::vector<float> distance_series;
-    float last_time = -10.0;
-    for (const auto& ego_point : planning_points.future_points) {
-        float time_from_start = ego_point.time_from_start;
-        if (time_from_start > this->time_bound_) {
-            break;
-        }
-
-        bool skip_cond1 = time_from_start > 0.0 &&
-                        time_from_start <= 1.0 &&
-                        time_from_start - last_time <= 0.5;
-        bool skip_cond2 = time_from_start >= 1.0 &&
-                        time_from_start - last_time <= 0.2;
-
-        if (skip_cond1 || skip_cond2) {
-            continue;
-        }
-
-        glm::vec2 planning_position = ego_point.position;
-        std::vector<glm::vec2> ego_plan_vertices = (
-            planning_points.ego_current_state.getVerticesWhenAtPosition(planning_position));
-
-        size_t no_npc_path_time_step = static_cast<size_t>(time_from_start / npc_path_time_step);
-        float remain_time = time_from_start - no_npc_path_time_step * npc_path_time_step;
-
-        if (no_npc_path_time_step >= predicted_path["path"].size() - 2) {
-            break;
-        }
-        const auto& npc_point0 = predicted_path["path"][no_npc_path_time_step];
-        const auto& npc_point1 = predicted_path["path"][no_npc_path_time_step + 1];
-
-        glm::vec2 npc_pos0 = glm::vec2(npc_point0["position"]["x"], npc_point0["position"]["y"]);
-        glm::vec2 npc_pos1 = glm::vec2(npc_point1["position"]["x"], npc_point1["position"]["y"]);
-        glm::vec2 segment = npc_pos1 - npc_pos0;
-        glm::vec2 estimated_npc_pos = npc_pos0 + remain_time / npc_path_time_step * segment;
-
-        std::vector<glm::vec2> npc_vertices = getObjectWorldVertices(
-            estimated_npc_pos,
-            current_heading,
-            npc_local_vertices
-        );
-        collision_series.push_back(isCollision(ego_plan_vertices, npc_vertices));
-        distance_series.push_back(glm::length(planning_position - estimated_npc_pos));
-        time_series.push_back(time_from_start);
-    }
-    float path_confidence = predicted_path["confidence"];
-    return this->evaluateSpec(time_series, collision_series, distance_series, existence_prob, path_confidence);
-}
-
-// Resample the trajectory to guarantee the safety requirements
-std::vector<autoware_planning_msgs::msg::TrajectoryPoint> PlanningShield::resampleTrajectoryPoints(
-        const autoware_planning_msgs::msg::Trajectory& trajectory_msg, 
-        size_t _id, 
-        const nlohmann::json& perception_msgs, 
-        const ConstantHeadingVehicle& ego_current_state) {
-    float jerk = this->jerk_start_attempt_;
-    float acc = this->acc_start_attempt_;
-    while (true) {
-        std::vector<autoware_planning_msgs::msg::TrajectoryPoint> new_ahead_points = 
-            resampleTrajectory(trajectory_msg.points, _id, -jerk, acc);
-
-        PlanningTrajectory new_planning_points = PlanningTrajectory(ego_current_state);
-        new_planning_points.parseFuturePoints(new_ahead_points);
-
-        if (this->verify(new_planning_points, perception_msgs)) {
-            // this new trajectory is safe
-            std::cout << "Braking profile acc: " << acc << ", jerk: " << jerk << " was applied to revise trajectory." << std::endl;
-            return mergePoints(trajectory_msg.points, _id, new_ahead_points);
-        }
-        jerk -= this->jerk_increment_;
-        acc -= this->acc_increment_;
-        if (jerk < this->min_jerk_ || acc < this->min_acc_) {
-            // Cannot find a trajectory that makes no collision
-            // Apply the strongest braking profile
-            std::cout << "Maximum braking profile was applied in the revised trajectory." << std::endl;
-            return mergePoints(trajectory_msg.points, _id, new_ahead_points);
+    // Update the scenario planning trajectory speed
+    if (scenario_planning_trajectory.points.size() >= 1) {
+        auto speed = scenario_planning_trajectory.points[0].longitudinal_velocity_mps;
+        if (speed > 0.0) {
+            scenario_planning_trajectory_speed = speed;
         }
     }
+
+    // if the latest trajectory was revised,
+    // update the speed of the scenario planning trajectory point
+    if (latest_verification_result_.was_revised) {
+        autoware_planning_msgs::msg::Trajectory updated_trajectory = latest_verification_result_.revised_msg;
+        updated_trajectory.header.stamp = scenario_planning_trajectory.header.stamp;
+        updated_trajectory.header.frame_id = scenario_planning_trajectory.header.frame_id;
+
+        for (size_t i = 0; i < updated_trajectory.points.size(); ++i) {
+            updated_trajectory.points[i].longitudinal_velocity_mps = scenario_planning_trajectory_speed;
+            updated_trajectory.points[i].time_from_start.sec = 0;
+            updated_trajectory.points[i].time_from_start.nanosec = 0;
+            updated_trajectory.points[i].lateral_velocity_mps = 0.0;
+            updated_trajectory.points[i].acceleration_mps2 = 0.0;
+            updated_trajectory.points[i].heading_rate_rps = 0.0;
+            updated_trajectory.points[i].front_wheel_angle_rad = 0.0;
+            updated_trajectory.points[i].rear_wheel_angle_rad = 0.0;
+        }
+        return updated_trajectory;
+    }
+
+    return std::nullopt;
 }
 
 /**
- * evaluate the safety specification by constructing a Kripke structure 
+ * @brief Evaluate the safety specification by constructing a Kripke structure
  * and checking the formula with Spot.
+ * @param timestamp_series Series of timestamps associated with states of "the state machine"
+ * @param collision_series Series of collision booleans, i.e., collision atomic proposition evaluation values
+ * @param distance_series Series of distance values, used to derive distance-related atomic proposition evaluation values
+ * @param existence_prob Probability of the object's existence
+ * @param path_confidence Confidence of the object predicted travel path
  */
-bool PlanningShield::evaluateSpec(const std::vector<float>& time_series,
+bool PlanningShield::evaluateSpec(const std::vector<float>& timestamp_series,
         const std::vector<bool>& collision_series,
         const std::vector<float>& distance_series,
         float existence_prob,
         float path_confidence) {
-    spot::bdd_dict_ptr dict = spot::make_bdd_dict();
-    spot::kripke_graph_ptr k = spot::make_kripke_graph(dict);
+    // auto start_time = std::chrono::high_resolution_clock::now();
+
+    // spot::bdd_dict_ptr dict = spot::make_bdd_dict();
+    // spot::kripke_graph_ptr k = spot::make_kripke_graph(dict);
+    spot::kripke_graph_ptr k = spot::make_kripke_graph(cached_bdd_dict_);
 
     std::vector<int> ap_ids;
     for (const auto& prop : this->propositions_) {
@@ -773,7 +513,7 @@ bool PlanningShield::evaluateSpec(const std::vector<float>& time_series,
     }
 
     unsigned lastest_state_id = 0;
-    for (size_t i = 0; i < time_series.size(); ++i) {
+    for (size_t i = 0; i < timestamp_series.size(); ++i) {
         bdd label = bddtrue;
 
         for (size_t j = 0; j < this->propositions_.size(); ++j) {
@@ -782,7 +522,7 @@ bool PlanningShield::evaluateSpec(const std::vector<float>& time_series,
             if (this->proposition_map_.find(prop) != this->proposition_map_.end()) {
                 float val = 0.0;
                 if (startsWith(prop, "time")) {
-                    val = time_series[i];
+                    val = timestamp_series[i];
                 } else if (startsWith(prop, "distance")) {
                     val = distance_series[i];
                 } else if (startsWith(prop, "existenceProb")) {
@@ -829,10 +569,8 @@ bool PlanningShield::evaluateSpec(const std::vector<float>& time_series,
         return true;
 
     k->new_edge(lastest_state_id, lastest_state_id); // self-loop for the last state
-
     // Translate formula negation.
     spot::formula f = spot::formula::Not(this->spec_formula_.f);
-    spot::twa_graph_ptr af = spot::translator(dict).run(f);
-
+    spot::twa_graph_ptr af = spot::translator(cached_bdd_dict_).run(f);
     return !k->intersecting_run(af);
 }

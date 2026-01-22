@@ -13,6 +13,10 @@ def generate_launch_description():
         'planning_shield_enabled',
         default_value='false',
     )
+    perception_shield_enabled = DeclareLaunchArgument(
+        'perception_shield_enabled',
+        default_value='false',
+    )
     no_sim = DeclareLaunchArgument(
         'no_sim',
         default_value='1',
@@ -25,6 +29,7 @@ def generate_launch_description():
     return LaunchDescription([
         output_arg,
         planning_shield_enabled,
+        perception_shield_enabled,
         no_sim,
         Node(
             package='aw_runtime_monitor',
@@ -34,6 +39,7 @@ def generate_launch_description():
             parameters=[config,  # <-- default config file
                         {'output_path': LaunchConfiguration('output_path'),
                          'planning_shield_enabled': LaunchConfiguration('planning_shield_enabled'),
+                         'perception_shield_enabled': LaunchConfiguration('perception_shield_enabled'),
                          'no_sim': LaunchConfiguration('no_sim')}
                         ]  
         )

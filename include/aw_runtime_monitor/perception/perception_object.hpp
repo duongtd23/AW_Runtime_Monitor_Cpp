@@ -4,6 +4,8 @@
 #include "aw_runtime_monitor/topic.hpp"
 #include "autoware_perception_msgs/msg/predicted_objects.hpp"
 #include "aw_runtime_monitor/utils.hpp"
+#include "nlohmann/json.hpp"
+#include "rclcpp/serialization.hpp"
 
 const std::string PREDICTED_OBJ_TOPIC_NAME = "/perception/object_recognition/objects";
 const std::string PREDICTED_OBJ_MSG_TYPE_STR = "autoware_perception_msgs/msg/PredictedObjects";
@@ -20,8 +22,25 @@ public:
         : Topic(shielded ? PREDICTED_OBJ_UNSHIELDED_TOPIC_NAME : PREDICTED_OBJ_TOPIC_NAME, PREDICTED_OBJ_MSG_TYPE_STR) {}
 
     // Implement pure virtual functions from Topic
-    nlohmann::json msgToJson(const std::shared_ptr<rclcpp::SerializedMessage>& msg) override;
-    std::string traceKey() override;
+    nlohmann::json msgToJson(const std::shared_ptr<rclcpp::SerializedMessage>& msg) override {
+        try {
+            // Deserialize the message
+            autoware_perception_msgs::msg::PredictedObjects perp_obj_msg;
+            rclcpp::Serialization<autoware_perception_msgs::msg::PredictedObjects> serializer;
+            rclcpp::SerializedMessage extracted_serialized_msg(*msg);
+            serializer.deserialize_message(&extracted_serialized_msg, &perp_obj_msg);
+            return perpMsgToJson(perp_obj_msg);
+        } catch (const std::exception& e) {
+            nlohmann::json j;
+            // Handle deserialization errors
+            j["error"] = "Failed to deserialize message: " + std::string(e.what());
+            j["timestamp"] = 0.0;
+            return j;
+        }
+    }
+    std::string traceKey() override {
+        return PerceptionObjectTopic::TRACE_KEY();
+    }
     static std::string TRACE_KEY() { return "perception_objects"; }
     static std::string SHIELDED_TRACE_KEY() { return TRACE_KEY() + "_shielded"; }
 

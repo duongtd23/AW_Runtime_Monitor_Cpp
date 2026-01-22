@@ -13,8 +13,14 @@ class AWRecorder;
 // Represent a ROS topic
 class Topic {
 public:
-    // Constructor to initialize Topic with topic_name, msg_type_str, and save_data flag
-    Topic(const std::string& topic_name, const std::string& msg_type_str, bool save_data = true);
+    /**
+     * @brief Represent a ROS topic
+     * @param topicname Name of the topic
+     * @param msg_type_str Message type as string (e.g., "aw_monitor/msg/GroundtruthKinematic")
+     * @param savedata Flag indicating whether to record data
+     */
+    Topic(const std::string& topic_name, const std::string& msg_type_str, bool save_data = true) 
+        : topic_name(topic_name), msg_type_str(msg_type_str), save_data(save_data) {}
 
     std::string topic_name;           // Name of the topic
     std::string msg_type_str;         // Message type as string (e.g., "aw_monitor/msg/GroundtruthKinematic")

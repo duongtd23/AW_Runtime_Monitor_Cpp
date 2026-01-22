@@ -17,7 +17,7 @@ namespace tqtl {
  */
 enum class ObjectClass {
     Car,
-    Cyclist,
+    Bicycle,
     Pedestrian,
     Unknown
 };
@@ -25,14 +25,14 @@ enum class ObjectClass {
 inline std::string objectClassToString(ObjectClass cls) {
     switch (cls) {
         case ObjectClass::Car: return "Car";
-        case ObjectClass::Cyclist: return "Cyclist";
+        case ObjectClass::Bicycle: return "Bicycle";
         case ObjectClass::Pedestrian: return "Pedestrian";
         default: return "Unknown";
     }
 }
 inline ObjectClass stringToObjectClass(const std::string& str) {
     if (str == "Car") return ObjectClass::Car;
-    if (str == "Cyclist") return ObjectClass::Cyclist;
+    if (str == "Bicycle") return ObjectClass::Bicycle;
     if (str == "Pedestrian") return ObjectClass::Pedestrian;
     return ObjectClass::Unknown;
 }

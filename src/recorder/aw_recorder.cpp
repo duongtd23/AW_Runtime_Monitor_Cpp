@@ -11,6 +11,59 @@ const std::string SPEC_SYNTAX_FILE_PATH = "formal_spec/syntax.maude";
 const std::string TRACE_FILE_PATH = "recorded_data";
 
 /**
+ * @brief Load revision config
+ */
+RevisionConfig AWRecorder::loadRevisionConfig() {
+    RevisionConfig revision_config;
+    // Load deceleration profiles
+    std::vector<std::string> profile_names;
+    std::vector<double> target_speed_ratios, max_decel_ratios, max_jerk_ratios, weights;
+    
+    // Load parameters for deceleration profiles
+    this->get_parameter("revision_deceleration_profiles.names", profile_names);
+    this->get_parameter("revision_deceleration_profiles.target_speed_ratios", target_speed_ratios);
+    this->get_parameter("revision_deceleration_profiles.max_decel_ratios", max_decel_ratios);
+    this->get_parameter("revision_deceleration_profiles.max_jerk_ratios", max_jerk_ratios);
+    this->get_parameter("revision_deceleration_profiles.weights", weights);
+    
+    // Construct deceleration profiles from loaded parameters
+    revision_config.deceleration_profiles.clear();
+    size_t num_profiles = std::min({profile_names.size(), target_speed_ratios.size(), 
+                                    max_decel_ratios.size(), max_jerk_ratios.size(), weights.size()});
+    for (size_t i = 0; i < num_profiles; ++i) {
+        revision_config.deceleration_profiles.emplace_back(
+            profile_names[i], target_speed_ratios[i], max_decel_ratios[i], 
+            max_jerk_ratios[i], weights[i]);
+    }
+    
+    // Load parameters for lateral shift
+    this->get_parameter("revision_lateral_shift.offsets", revision_config.lateral_offsets);
+    this->get_parameter("revision_lateral_shift.weight_base", revision_config.lateral_weight_base);
+    this->get_parameter("revision_lateral_shift.weight_factor", revision_config.lateral_weight_factor);
+
+    // Load parameters for combined corrections
+    this->get_parameter("revision_combined.decel_profile_indices", revision_config.combined_decel_profile_indices);
+    this->get_parameter("revision_combined.lateral_offsets", revision_config.combined_lateral_offsets);
+    this->get_parameter("revision_combined.weight_base", revision_config.combined_weight_base);
+    this->get_parameter("revision_combined.weight_factor", revision_config.combined_weight_factor);
+
+    // Load other parameters
+    this->get_parameter("revision_smoothing_iterations", revision_config.smoothing_iterations);
+    this->get_parameter("revision_smoothing_weight", revision_config.smoothing_weight);
+    this->get_parameter("revision_max_curvature", revision_config.max_curvature);
+    this->get_parameter("revision_max_candidates", revision_config.max_candidates);
+    this->get_parameter("revision_min_points", revision_config.min_points);
+
+    // RCLCPP_INFO(this->get_logger(), "Loaded %zu deceleration profiles for trajectory revision", 
+    //             revision_config.deceleration_profiles.size());
+    // RCLCPP_INFO(this->get_logger(), "Loaded %zu lateral shift offsets for trajectory revision", 
+    //             revision_config.lateral_offsets.size());
+    // RCLCPP_INFO(this->get_logger(), "Loaded %zu combined corrections for trajectory revision", 
+    //             revision_config.combined_decel_profile_indices.size());
+    return revision_config;
+}
+
+/**
  * @brief Initialize parameters, e.g., output path, no_sim
  */
 void AWRecorder::initializeParameters() {
@@ -18,23 +71,46 @@ void AWRecorder::initializeParameters() {
     this->declare_parameter<std::string>("output_path", TRACE_FILE_PATH);
     this->declare_parameter<int>("no_sim", 1);
 
-    // planning shield parameters
-    this->declare_parameter<bool>("planning_shield_enabled", false);
-    // Other parameters for the planning shield (can be set in default.yaml file), which are less likely to change per run
-    this->declare_parameter<std::string>("spec_syntax_file_path", SPEC_SYNTAX_FILE_PATH);
-    this->declare_parameter<std::string>("safety_formula", PLANNING_SPEC);
+    // Parameters that are less likely to change per run
     this->declare_parameter<std::vector<std::string>>("topics", topic_names_);
-    // inner parameters
+
+    // planning shield parameters (config in default.yaml)
+    this->declare_parameter<bool>("planning_shield_enabled", false);
+    this->declare_parameter<std::string>("spec_syntax_file_path", SPEC_SYNTAX_FILE_PATH);
+    this->declare_parameter<std::string>("planning_safety_spec", PLANNING_SPEC);
     this->declare_parameter<double>("speed_threshold_activation", 3.0);
-    this->declare_parameter<double>("min_acc", -7.0);
-    this->declare_parameter<double>("min_jerk", -12.0);
-    this->declare_parameter<double>("acc_start_attempt", -4.0);
-    this->declare_parameter<double>("jerk_start_attempt", -3.0);
-    this->declare_parameter<double>("acc_increment", 1.0);
-    this->declare_parameter<double>("jerk_increment", 2.66667);
-    this->declare_parameter<double>("time_bound", 5.0);
-    this->declare_parameter<int>("unsafe_confirmation_frames", 2);
-    this->declare_parameter<double>("distance_bound", 20.0);
+    this->declare_parameter<double>("time_bound", 10.0);
+    this->declare_parameter<double>("distance_bound", 80.0);
+
+    // Deceleration profile parameters (replaces velocity scaling)
+    this->declare_parameter<std::vector<std::string>>("revision_deceleration_profiles.names", 
+        std::vector<std::string>{});
+    this->declare_parameter<std::vector<double>>("revision_deceleration_profiles.target_speed_ratios", 
+        std::vector<double>{});
+    this->declare_parameter<std::vector<double>>("revision_deceleration_profiles.max_decel_ratios", 
+        std::vector<double>{});
+    this->declare_parameter<std::vector<double>>("revision_deceleration_profiles.max_jerk_ratios", 
+        std::vector<double>{});
+    this->declare_parameter<std::vector<double>>("revision_deceleration_profiles.weights", 
+        std::vector<double>{});
+    
+    // Lateral shift parameters
+    this->declare_parameter<std::vector<double>>("revision_lateral_shift.offsets", std::vector<double>{});
+    this->declare_parameter<double>("revision_lateral_shift.weight_base", 5.0);
+    this->declare_parameter<double>("revision_lateral_shift.weight_factor", 3.0);
+
+    // Combined correction parameters
+    this->declare_parameter<std::vector<int>>("revision_combined.decel_profile_indices", std::vector<int>{});
+    this->declare_parameter<std::vector<double>>("revision_combined.lateral_offsets", std::vector<double>{});
+    this->declare_parameter<double>("revision_combined.weight_base", 10.0);
+    this->declare_parameter<double>("revision_combined.weight_factor", 2.0);
+
+    // Other revision parameters
+    this->declare_parameter<int>("revision_smoothing_iterations", 5);
+    this->declare_parameter<double>("revision_smoothing_weight", 0.2);
+    this->declare_parameter<double>("revision_max_curvature", 0.2);
+    this->declare_parameter<int>("revision_max_candidates", 50);
+    this->declare_parameter<int>("revision_min_points", 30);
 
     // perception shield parameters
     this->declare_parameter<bool>("perception_shield_enabled", false);
@@ -56,6 +132,7 @@ void AWRecorder::perceptionShieldInit() {
         double speed_threshold_activation;  
         this->get_parameter("speed_threshold_perp_shield_activation", speed_threshold_activation);
         this->get_parameter("perception_spec", perception_spec_str);
+        
         this->perception_shield_ = PerceptionShield(perception_spec_str, speed_threshold_activation);
         RCLCPP_INFO(this->get_logger(), "Perception shield is enabled, formula: %s", perception_shield_.getSpecFormula()->toString().c_str());
     }
@@ -73,43 +150,62 @@ void AWRecorder::planningShieldInit() {
         this->create_publisher<autoware_planning_msgs::msg::Trajectory>(SCENARIO_PLTR_TOPIC_NAME, qos);
 
     if (planning_shield_enabled_) {
-        RCLCPP_INFO(this->get_logger(), "Planning shield is enabled.");
+        // If planning shield is enabled, also subscribe to scenario planning trajectory topic.
+        // This is for inserting a stopping point, otherwise ego will not stop.
+        auto topic = std::make_shared<ScenarioPlanningTrajectoryTopic>();
+        topics_.push_back(topic);
+
         std::string safety_formula, spec_syntax_file_path;
-        this->get_parameter("spec_syntax_file_path", spec_syntax_file_path);
-        this->get_parameter("safety_formula", safety_formula);
-
-        double min_acc, min_jerk, acc_start_attempt, jerk_start_attempt, acc_increment, jerk_increment;
         double speed_threshold_activation, time_bound, distance_bound;
-        int unsafe_confirmation_frames;
-        this->get_parameter("speed_threshold_activation", speed_threshold_activation);
-        this->get_parameter("min_acc", min_acc);
-        this->get_parameter("min_jerk", min_jerk);
-        this->get_parameter("acc_start_attempt", acc_start_attempt);
-        this->get_parameter("jerk_start_attempt", jerk_start_attempt);
-        this->get_parameter("acc_increment", acc_increment);
-        this->get_parameter("jerk_increment", jerk_increment);
-        this->get_parameter("time_bound", time_bound);
-        this->get_parameter("unsafe_confirmation_frames", unsafe_confirmation_frames);
-        this->get_parameter("distance_bound", distance_bound);
-        this->planning_shield_ = PlanningShield(
-            verified_trajectory_publisher_,
-            verified_motion_velocity_publisher_,
-            safety_formula, spec_syntax_file_path,
-            speed_threshold_activation, min_acc, min_jerk,
-            acc_start_attempt, jerk_start_attempt, acc_increment, jerk_increment, 
-            time_bound, unsafe_confirmation_frames, distance_bound);
 
-        // if planning shield is enabled, add necessary topics to subscribe
-        if (std::find(topic_names_.begin(), topic_names_.end(), "UnverifiedPlanningTrajectory") == topic_names_.end()) {
-            auto topic = std::make_shared<UnverifiedPlanningTrajectoryTopic>();
-            topic->save_data = false;
-            topics_.push_back(topic);
+        this->get_parameter("spec_syntax_file_path", spec_syntax_file_path);
+        this->get_parameter("planning_safety_spec", safety_formula);
+        this->get_parameter("speed_threshold_activation", speed_threshold_activation);
+        this->get_parameter("time_bound", time_bound);
+        this->get_parameter("distance_bound", distance_bound);
+
+        RevisionConfig revision_config = loadRevisionConfig();
+        this->planning_shield_ = PlanningShield(
+            safety_formula, spec_syntax_file_path,
+            speed_threshold_activation, 
+            time_bound, distance_bound,
+            revision_config);
+
+        RCLCPP_INFO(this->get_logger(), "Planning shield is enabled, formula: %s", safety_formula.c_str());
+
+        // Subscribe to map and route
+        map_sub_ = create_subscription<autoware_map_msgs::msg::LaneletMapBin>(
+            "/map/vector_map", rclcpp::QoS(1).transient_local(),
+            [this](const autoware_map_msgs::msg::LaneletMapBin::ConstSharedPtr msg) {
+                planning_shield_.setMapForDrivableAreaChecker(msg);
+                std::cout << "Map loaded" << std::endl;
+            });
+
+        route_sub_ = create_subscription<autoware_planning_msgs::msg::LaneletRoute>(
+            "/planning/mission_planning/route", rclcpp::QoS(1).transient_local(),
+            [this](const autoware_planning_msgs::msg::LaneletRoute::ConstSharedPtr msg) {
+                planning_shield_.setRouteForDrivableAreaChecker(msg);
+                std::cout << "Route loaded" << std::endl;
+            });
+
+
+        // fetch min_acc and min_jerk from obstacle cruise planner parameters
+        auto param_client = std::make_shared<rclcpp::SyncParametersClient>(this, 
+            "/planning/scenario_planning/lane_driving/motion_planning/obstacle_cruise_planner");
+        while (rclcpp::ok() && !param_client->wait_for_service(std::chrono::seconds(3))) {
+            RCLCPP_INFO(this->get_logger(), "Waiting for Autoware services ready...");
         }
-        if (std::find(topic_names_.begin(), topic_names_.end(), "UnverifiedScenarioPlanningTrajectory") == topic_names_.end()) {
-            auto topic = std::make_shared<UnverifiedScenarioPlanningTrajectoryTopic>();
-            topic->save_data = false;
-            topics_.push_back(topic);
+        if (!rclcpp::ok()) {
+            RCLCPP_WARN(this->get_logger(), "Node is shutting down before Autoware services became available.");
+            return;
         }
+        auto parameters = param_client->get_parameters({"limit.min_acc", "limit.min_jerk"});
+        double fetched_min_acc = parameters[0].as_double();
+        double fetched_min_jerk = parameters[1].as_double();
+        planning_shield_.setMinAccJerk(fetched_min_acc, fetched_min_jerk);
+        
+        RCLCPP_INFO(this->get_logger(), "Fetched min_acc: %.2f, min_jerk: %.2f from obstacle cruise planner", 
+            fetched_min_acc, fetched_min_jerk);
     }
 }
 
@@ -122,6 +218,12 @@ AWRecorder::AWRecorder() : Node("aw_recorder") {
     this->get_parameter("topics", topic_names_);
     this->get_parameter("perception_shield_enabled", perception_shield_enabled_);
     this->get_parameter("planning_shield_enabled", planning_shield_enabled_);
+
+    // // print all topic names
+    // RCLCPP_INFO(this->get_logger(), "Topics to record:");
+    // for (const auto& name : topic_names_) {
+    //     RCLCPP_INFO(this->get_logger(), " - %s", name.c_str());
+    // }
 
     // parse topics
     for (const auto& name : topic_names_) {
@@ -140,28 +242,14 @@ AWRecorder::AWRecorder() : Node("aw_recorder") {
         } else if (name == "BoundingBoxPerceptionObject") {
             topics_.push_back(std::make_shared<BoundingBoxPerceptionObjectTopic>());
         } else if (name == "PlanningTrajectory") {
-            topics_.push_back(std::make_shared<PlanningTrajectoryTopic>());
-        } else if (name == "UnverifiedPlanningTrajectory") {
-            if (planning_shield_enabled_) {
-                topics_.push_back(std::make_shared<UnverifiedPlanningTrajectoryTopic>());
-            } else {
-                RCLCPP_WARN(this->get_logger(), "Planning shield is disabled, skip UnverifiedPlanningTrajectory topic.");
-            }
-        } else if (name == "UnverifiedScenarioPlanningTrajectory") {
-            if (planning_shield_enabled_) {
-                auto topic = std::make_shared<UnverifiedScenarioPlanningTrajectoryTopic>();
-                topic->save_data = true;
-                topics_.push_back(topic);
-            } else {
-                RCLCPP_WARN(this->get_logger(), "Planning shield is disabled, skip UnverifiedScenarioPlanningTrajectory topic.");
-            }
+            topics_.push_back(std::make_shared<PlanningTrajectoryTopic>(planning_shield_enabled_));
         } else if (name == "CameraFootage") {
             topics_.push_back(std::make_shared<CameraFootageTopic>());
         } else {
             RCLCPP_ERROR(this->get_logger(), "Unknown topic name: %s", name.c_str());
         }
     }
-    
+
     // for tracking autonomous driving state, e.g., starting moving, goal arrived
     topics_.push_back(std::make_shared<OperationModeTrackerTopic>());
     topics_.push_back(std::make_shared<RouteStateTrackerTopic>());
@@ -174,19 +262,17 @@ AWRecorder::AWRecorder() : Node("aw_recorder") {
 
 void AWRecorder::reset() {
     this->is_recording_ = false;
-    if (planning_shield_enabled_)
-        this->planning_shield_.verification_times_.clear();
+    // if (planning_shield_enabled_)
+    //     this->planning_shield_.verification_times_.clear();
 
     for (auto topic : topics_) {
         if (topic->topic_name == GROUNDTRUTH_KINEMATIC_TOPIC_NAME ||
             topic->topic_name == ESTIMATED_KIN_TOPIC_NAME ||
-            topic->topic_name == PLTR_UNVERIFIED_TOPIC_NAME ||
-            topic->topic_name == PLTR_TOPIC_NAME ||
+            dynamic_cast<PlanningTrajectoryTopic*>(topic.get()) ||
+            dynamic_cast<ScenarioPlanningTrajectoryTopic*>(topic.get()) ||
             dynamic_cast<PerceptionObjectTopic*>(topic.get()) ||
             topic->topic_name == BBOX_PREDICTED_OBJ_TOPIC_NAME ||
-            topic->topic_name == CONTROL_COMMAND_TOPIC_NAME ||
-            topic->topic_name == SCENARIO_PLTR_TOPIC_NAME ||
-            topic->topic_name == SCENARIO_PLTR_UNVERIFIED_TOPIC_NAME) {
+            topic->topic_name == CONTROL_COMMAND_TOPIC_NAME) {
                 if (topic->save_data)
                   this->recorded_data_[topic->traceKey()] = nlohmann::json::array();
         } 
@@ -198,6 +284,9 @@ void AWRecorder::reset() {
     if (perception_shield_enabled_) {
         this->recorded_data_[PerceptionObjectTopic::SHIELDED_TRACE_KEY()] = nlohmann::json::array();
         this->perception_shield_.reset();
+    }
+    if (planning_shield_enabled_) {
+        this->recorded_data_[PlanningTrajectoryTopic::SHIELDED_TRACE_KEY()] = nlohmann::json::array();
     }
     this->frames_.clear();
 }
@@ -247,15 +336,12 @@ void AWRecorder::save_data(const std::shared_ptr<Topic> topic, const std::shared
             if (topic->save_data)
                 this->recorded_data_[topic->traceKey()] = json_data;
     } 
-    else if (dynamic_cast<PerceptionObjectTopic*>(topic.get()) ||
+    else if (dynamic_cast<PlanningTrajectoryTopic*>(topic.get()) ||
+            dynamic_cast<ScenarioPlanningTrajectoryTopic*>(topic.get()) ||dynamic_cast<PerceptionObjectTopic*>(topic.get()) ||
             topic->topic_name == GROUNDTRUTH_KINEMATIC_TOPIC_NAME ||
             topic->topic_name == ESTIMATED_KIN_TOPIC_NAME ||
-            topic->topic_name == PLTR_TOPIC_NAME ||
             topic->topic_name == BBOX_PREDICTED_OBJ_TOPIC_NAME ||
-            topic->topic_name == CONTROL_COMMAND_TOPIC_NAME ||
-            topic->topic_name == SCENARIO_PLTR_TOPIC_NAME ||
-            topic->topic_name == PLTR_UNVERIFIED_TOPIC_NAME ||
-            topic->topic_name == SCENARIO_PLTR_UNVERIFIED_TOPIC_NAME) {
+            topic->topic_name == CONTROL_COMMAND_TOPIC_NAME) {
         if (topic->save_data)
             this->recorded_data_[topic->traceKey()].emplace_back(json_data);
     }
@@ -265,31 +351,39 @@ void AWRecorder::unifiedCallback(const std::shared_ptr<rclcpp::SerializedMessage
                                 const std::shared_ptr<Topic> topic) {
     this->save_data(topic, msg);
 
-    if (topic->topic_name == PLTR_UNVERIFIED_TOPIC_NAME) {
-        autoware_planning_msgs::msg::Trajectory trajectory_msg;
-        rclcpp::Serialization<autoware_planning_msgs::msg::Trajectory> serializer;
-        rclcpp::SerializedMessage extracted_serialized_msg(*msg);
-        serializer.deserialize_message(&extracted_serialized_msg, &trajectory_msg);
-        if (planning_shield_enabled_) {
-            this->planning_shield_.intervene(trajectory_msg, this->recorded_data_);
-        } else {
-            this->verified_trajectory_publisher_->publish(trajectory_msg);
-        }
-    }
-    else if (topic->topic_name == SCENARIO_PLTR_UNVERIFIED_TOPIC_NAME) {
+    if (planning_shield_enabled_ && topic->topic_name == PLTR_UNVERIFIED_TOPIC_NAME) {
         autoware_planning_msgs::msg::Trajectory trajectory_msg;
         rclcpp::Serialization<autoware_planning_msgs::msg::Trajectory> serializer;
         rclcpp::SerializedMessage extracted_serialized_msg(*msg);
         serializer.deserialize_message(&extracted_serialized_msg, &trajectory_msg);
 
-        if (planning_shield_enabled_) {
-            this->planning_shield_.interveneMotionVelocityMsg(trajectory_msg);
+        auto start_time = std::chrono::high_resolution_clock::now();
+        auto verif_result = this->planning_shield_.verify(trajectory_msg, this->recorded_data_);
+
+        if (!verif_result.is_safe) {
+            auto end_time =  std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+
+            RCLCPP_WARN(this->get_logger(), "Unsafe planning trajectory [%lf] detected by the planning shield. Verif time: %ld ms\n", timestamp(trajectory_msg.header), duration);
+            this->recorded_data_[PlanningTrajectoryTopic::SHIELDED_TRACE_KEY()].emplace_back(
+                planningTrajMsgToJson(verif_result.revised_msg));
+        }
+        this->verified_trajectory_publisher_->publish(verif_result.revised_msg);
+    }
+    else if (planning_shield_enabled_ && topic->topic_name == SCENARIO_PLTR_UNVERIFIED_TOPIC_NAME) {
+        autoware_planning_msgs::msg::Trajectory trajectory_msg;
+        rclcpp::Serialization<autoware_planning_msgs::msg::Trajectory> serializer;
+        rclcpp::SerializedMessage extracted_serialized_msg(*msg);
+        serializer.deserialize_message(&extracted_serialized_msg, &trajectory_msg);
+
+        auto verif_result = this->planning_shield_.handleScenarioPlanningTrajectory(trajectory_msg, this->recorded_data_);
+        if (verif_result.has_value()) {
+            this->verified_motion_velocity_publisher_->publish(verif_result.value());
         } else {
             this->verified_motion_velocity_publisher_->publish(trajectory_msg);
         }
     }
     else if (perception_shield_enabled_ && topic->topic_name == PREDICTED_OBJ_UNSHIELDED_TOPIC_NAME) {
-        // RCLCPP_DEBUG(this->get_logger(), "Unshielded perception object message received.");
         autoware_perception_msgs::msg::PredictedObjects perp_obj_msg;
         rclcpp::Serialization<autoware_perception_msgs::msg::PredictedObjects> serializer;
         rclcpp::SerializedMessage extracted_serialized_msg(*msg);
@@ -362,13 +456,13 @@ void AWRecorder::stopRecording() {
     // this->recorded_data_.clear();
     // this->frames_.clear();
 
-    if (planning_shield_enabled_) {
-        std::cout << "Verification times (ms): ";
-        for (const auto& time : this->planning_shield_.verification_times_) {
-            std::cout << time << " ";
-        }
-        std::cout << std::endl;
-    }
+    // if (planning_shield_enabled_) {
+    //     std::cout << "Verification times (ms): ";
+    //     for (const auto& time : this->planning_shield_.verification_times_) {
+    //         std::cout << time << " ";
+    //     }
+    //     std::cout << std::endl;
+    // }
     this->reset();
     this->no_sim_++;
 }

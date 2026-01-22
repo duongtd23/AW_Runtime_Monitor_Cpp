@@ -19,4 +19,17 @@ public:
     static std::string TRACE_KEY() { return "ego_estimated_kinematic"; }
 };
 
+inline glm::vec3 getCurrentVelocity(const nlohmann::json& recorded_messages) {
+    if (recorded_messages.find(EstimatedKinematicTopic::TRACE_KEY()) == recorded_messages.end() ||
+        recorded_messages.at(EstimatedKinematicTopic::TRACE_KEY()).empty()) {
+            return glm::vec3(0.0f);
+    }
+    auto kin = recorded_messages[EstimatedKinematicTopic::TRACE_KEY()].back();
+    return jsonPointToVector3(kin["twist"]["linear"]);
+}
+
+inline float getCurrentSpeed(const nlohmann::json& recorded_messages) {
+    return glm::length(getCurrentVelocity(recorded_messages));
+}
+
 #endif

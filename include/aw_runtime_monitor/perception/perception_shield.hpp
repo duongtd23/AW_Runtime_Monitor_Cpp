@@ -4,6 +4,7 @@
 #include <string>
 #include <optional>
 #include "aw_runtime_monitor/perception/perception_object.hpp"
+#include "aw_runtime_monitor/localization/estimated_kinematic.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include <tqtl/tqtl.hpp>
 #include <vector>
