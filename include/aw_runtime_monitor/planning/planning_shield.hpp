@@ -1,7 +1,6 @@
 #ifndef PLANNING_SHIELD_HPP
 #define PLANNING_SHIELD_HPP
 
-#include "aw_runtime_monitor/planning/trajectory_manipulation.hpp"
 #include "aw_runtime_monitor/planning/planning_trajectory.hpp"
 #include "aw_runtime_monitor/planning/drivable_area_checker.hpp"
 #include "aw_runtime_monitor/planning/trajectory_revision.hpp"
@@ -132,6 +131,12 @@ private:
 
     spot::bdd_dict_ptr cached_bdd_dict_;
 
+    spot::kripke_graph_ptr kripke_graph_;
+    spot::bdd_dict_ptr bdd_dict_;
+    std::vector<int> ap_ids_;
+    unsigned latest_state_id_ = 0;
+    spot::twa_graph_ptr af_;
+
     rclcpp::Logger logger_;
 
     bool evaluateSpec(const std::vector<float>& timestamp_series,
@@ -144,6 +149,9 @@ private:
 // ============================================================================
 // Helper functions
 // ============================================================================
+inline glm::vec2 extractObjPosition(const autoware_planning_msgs::msg::TrajectoryPoint& entry) {
+    return glm::vec2(entry.pose.position.x, entry.pose.position.y);
+}
 
 /**
  * @brief Extract the closest trajectory point to the current ego position.

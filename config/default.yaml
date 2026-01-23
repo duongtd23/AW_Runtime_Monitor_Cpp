@@ -41,12 +41,7 @@ aw_recorder:
     # unsafe_confirmation_frames: 2
 
     ## TrajectoryReviser config.
-    # to disable an option, comment it
-    revision_types: 
-    - deceleration
-    - lateral_shift
-    - combined
-    
+    ## To disable a revision option, comment it
     ## Deceleration Profiles
     # Each profile defines a level of deceleration intensity
     # target_speed_ratio: 0.0 = full stop, 0.3 = reduce to 30% of current speed
@@ -54,28 +49,33 @@ aw_recorder:
     # max_jerk_ratio: ratio of ego_min_jerk to use (0.4 = 40%, 1.0 = 100%)
     # weight: lower values are tried first
     revision_deceleration_profiles:
-      names: ["gentle_stop", "moderate_stop", "aggressive_stop"]
-      target_speed_ratios: [0.0, 0.0, 0.0]
-      max_decel_ratios: [0.5, 0.75, 1.0]
-      max_jerk_ratios: [0.5, 0.75, 1.0]
-      weights: [1.0, 2.0, 3.0]
+        names: ["gentle_stop", "moderate_stop", "aggressive_stop"]
+        target_speed_ratios: [0.0, 0.0, 0.0]
+        max_decel_ratios: [0.5, 0.75, 1.0]
+        max_jerk_ratios: [0.5, 0.75, 1.0]
+        weights: [1.0, 2.0, 3.0]
     
     ## Lateral shift parameters
     revision_lateral_shift:
-      offsets: [0.5, 1.0, 1.5]
-      weight_base: 5.0
-      weight_factor: 3.0
+        offsets: [0.5, 1.0, 1.5]
+        weight_base: 5.0
+        weight_factor: 3.0
     
-    ## Combined correction parameters (deceleration + lateral shift)
+    # ## Combined correction parameters (deceleration + lateral shift)
     revision_combined:
-      # Indices of deceleration profiles to combine (0=gentle, 1=moderate, 2=aggressive)
-      decel_profile_indices: [1, 2]  # Use gentle, moderate, aggressive
-      # Lateral offsets for combined corrections (in meters)
-      lateral_offsets: [1.0, 1.5]
-      # Weight parameters for combined corrections
-      weight_base: 10.0
-      weight_factor: 2.0
-    
+        # Deceleration profiles to combine
+        decel_profiles:
+            names: ["moderate_stop", "aggressive_stop"]
+            target_speed_ratios: [0.0, 0.0]
+            max_decel_ratios: [0.75, 1.0]
+            max_jerk_ratios: [0.75, 1.0]
+            weights: [2.0, 3.0]
+        # Lateral offsets for combined corrections (in meters)
+        lateral_offsets: [0.5, 1.0]
+        # Weight parameters for combined corrections
+        weight_base: 10.0
+        weight_factor: 2.0
+
     revision_smoothing_iterations: 5
     revision_smoothing_weight: 0.3
     revision_max_curvature: 1.0

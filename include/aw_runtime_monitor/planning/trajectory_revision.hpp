@@ -106,9 +106,9 @@ struct RevisionConfig {
 
     // Combined correction parameters
     // Indices of deceleration profiles to use in combined corrections
-    std::vector<long int> combined_decel_profile_indices = {0, 1, 2};  // e.g., gentle, moderate, aggressive
+    std::vector<DecelerationProfile> combined_decel_profiles = {};
     // Lateral offsets to use in combined corrections (in meters)
-    std::vector<double> combined_lateral_offsets = {0.5, 1.0, 1.5};
+    std::vector<double> combined_lateral_offsets = {};
     double combined_weight_base = 10.0;     // Base weight for combined (higher than individual)
     double combined_weight_factor = 2.0;    // Weight multiplier per combination
 
@@ -261,7 +261,7 @@ private:
      */
     bool checkCurvatureConstraints(
         const std::vector<autoware_planning_msgs::msg::TrajectoryPoint>& points,
-        size_t start_idx) const;
+        size_t start_idx, size_t shift_end) const;
     
     /**
      * @brief Compute curvature at a point using three consecutive points

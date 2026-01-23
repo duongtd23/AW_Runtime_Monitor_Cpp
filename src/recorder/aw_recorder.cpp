@@ -42,10 +42,27 @@ RevisionConfig AWRecorder::loadRevisionConfig() {
     this->get_parameter("revision_lateral_shift.weight_factor", revision_config.lateral_weight_factor);
 
     // Load parameters for combined corrections
-    this->get_parameter("revision_combined.decel_profile_indices", revision_config.combined_decel_profile_indices);
+    std::vector<std::string> combined_decel_profile_names;
+    std::vector<double> combined_target_speed_ratios, combined_max_decel_ratios, combined_max_jerk_ratios, combined_weights;
+
     this->get_parameter("revision_combined.lateral_offsets", revision_config.combined_lateral_offsets);
     this->get_parameter("revision_combined.weight_base", revision_config.combined_weight_base);
     this->get_parameter("revision_combined.weight_factor", revision_config.combined_weight_factor);
+
+    this->get_parameter("revision_combined.decel_profiles.names", combined_decel_profile_names);
+    this->get_parameter("revision_combined.decel_profiles.target_speed_ratios", combined_target_speed_ratios);
+    this->get_parameter("revision_combined.decel_profiles.max_decel_ratios", combined_max_decel_ratios);
+    this->get_parameter("revision_combined.decel_profiles.max_jerk_ratios", combined_max_jerk_ratios);
+    this->get_parameter("revision_combined.decel_profiles.weights", combined_weights);
+
+    revision_config.combined_decel_profiles.clear();
+    size_t num_combined_profiles = std::min({combined_decel_profile_names.size(), combined_target_speed_ratios.size(),
+                                            combined_max_decel_ratios.size(), combined_max_jerk_ratios.size(), combined_weights.size()});
+    for (size_t i = 0; i < num_combined_profiles; ++i) {
+        revision_config.combined_decel_profiles.emplace_back(
+            combined_decel_profile_names[i], combined_target_speed_ratios[i], combined_max_decel_ratios[i],
+            combined_max_jerk_ratios[i], combined_weights[i]);
+    }
 
     // Load other parameters
     this->get_parameter("revision_smoothing_iterations", revision_config.smoothing_iterations);
@@ -100,7 +117,11 @@ void AWRecorder::initializeParameters() {
     this->declare_parameter<double>("revision_lateral_shift.weight_factor", 3.0);
 
     // Combined correction parameters
-    this->declare_parameter<std::vector<int>>("revision_combined.decel_profile_indices", std::vector<int>{});
+    this->declare_parameter<std::vector<std::string>>("revision_combined.decel_profiles.names", std::vector<std::string>{});
+    this->declare_parameter<std::vector<double>>("revision_combined.decel_profiles.target_speed_ratios", std::vector<double>{});
+    this->declare_parameter<std::vector<double>>("revision_combined.decel_profiles.max_decel_ratios", std::vector<double>{});
+    this->declare_parameter<std::vector<double>>("revision_combined.decel_profiles.max_jerk_ratios", std::vector<double>{});
+    this->declare_parameter<std::vector<double>>("revision_combined.decel_profiles.weights", std::vector<double>{});
     this->declare_parameter<std::vector<double>>("revision_combined.lateral_offsets", std::vector<double>{});
     this->declare_parameter<double>("revision_combined.weight_base", 10.0);
     this->declare_parameter<double>("revision_combined.weight_factor", 2.0);
@@ -364,7 +385,8 @@ void AWRecorder::unifiedCallback(const std::shared_ptr<rclcpp::SerializedMessage
             auto end_time =  std::chrono::high_resolution_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
 
-            RCLCPP_WARN(this->get_logger(), "Unsafe planning trajectory [%lf] detected by the planning shield. Verif time: %ld ms\n", timestamp(trajectory_msg.header), duration);
+            RCLCPP_WARN(this->get_logger(), "Unsafe planning trajectory [%lf] detected by the planning shield. Verif time: %ld ms", timestamp(trajectory_msg.header), duration);
+            std::cout << std::endl;
             this->recorded_data_[PlanningTrajectoryTopic::SHIELDED_TRACE_KEY()].emplace_back(
                 planningTrajMsgToJson(verif_result.revised_msg));
         }

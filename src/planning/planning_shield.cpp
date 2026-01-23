@@ -84,6 +84,15 @@ PlanningShield::PlanningShield(
         this->spec_formula_ = spot::parse_infix_psl(renamed_spec_formula_str);
         if (this->spec_formula_.format_errors(std::cerr))
             std::cerr << "[ERROR] Failed to parse specification formula: " << renamed_spec_formula_str << std::endl;
+
+        bdd_dict_ = spot::make_bdd_dict();
+        kripke_graph_ = spot::make_kripke_graph(bdd_dict_);
+        for (const auto& prop : this->propositions_) {
+            ap_ids_.push_back(kripke_graph_->register_ap(prop));
+        }
+        // Translate formula negation.
+        spot::formula f = spot::formula::Not(this->spec_formula_.f);
+        af_ = spot::translator(bdd_dict_).run(f);
     } catch (const std::exception& e) {
         std::cerr << "[ERROR] Failed to parse specification formula: " << e.what() << std::endl;
     }
@@ -439,8 +448,7 @@ PlanningShield::InternalVerificationResult PlanningShield::doVerify(
             }
             
             // Verify safety specification
-            if (!evaluateSpec(timestamp_series, collision_series, distance_series, 
-                              existence_prob, path_confidence)) {
+            if (!evaluateSpec(timestamp_series, collision_series, distance_series, existence_prob, path_confidence)) {
                 // std::cout << "[DEBUG] Object Predicted Path Points (x,y):" << std::endl;
                 // for (const auto& pt : path_points) {
                 //     std::cout << "  (" << pt["position"]["x"] << ", " << pt["position"]["y"] << "), " << std::endl;
@@ -501,18 +509,10 @@ bool PlanningShield::evaluateSpec(const std::vector<float>& timestamp_series,
         const std::vector<float>& distance_series,
         float existence_prob,
         float path_confidence) {
-    // auto start_time = std::chrono::high_resolution_clock::now();
-
-    // spot::bdd_dict_ptr dict = spot::make_bdd_dict();
-    // spot::kripke_graph_ptr k = spot::make_kripke_graph(dict);
-    spot::kripke_graph_ptr k = spot::make_kripke_graph(cached_bdd_dict_);
-
-    std::vector<int> ap_ids;
-    for (const auto& prop : this->propositions_) {
-        ap_ids.push_back(k->register_ap(prop));
+    
+    if (timestamp_series.size() <= 1) {
+        return true;
     }
-
-    unsigned lastest_state_id = 0;
     for (size_t i = 0; i < timestamp_series.size(); ++i) {
         bdd label = bddtrue;
 
@@ -543,34 +543,22 @@ bool PlanningShield::evaluateSpec(const std::vector<float>& timestamp_series,
                 }
             }
             if (prop_holds) {
-                label &= bdd_ithvar(ap_ids[j]);
+                label &= bdd_ithvar(ap_ids_[j]);
             } else {
-                label &= bdd_nithvar(ap_ids[j]);
+                label &= bdd_nithvar(ap_ids_[j]);
             }
         }
 
-        // E.g., time-le-3.0
-        // if (time_series[i] <= 3.0) {
-        //     label &= bdd_ithvar(ap_ids[0]);
-        // } else {
-        //     label &= bdd_nithvar(ap_ids[0]);
-        // }
-
-        unsigned state_id = k->new_state(label);
+        unsigned state_id = kripke_graph_->new_state(label);
         if (i == 0) {
-            k->set_init_state(state_id);
+            kripke_graph_->set_init_state(state_id);
         }
-        else if (i > 0) {
-            k->new_edge(lastest_state_id, state_id);
+        else {
+            kripke_graph_->new_edge(latest_state_id_, state_id);
         }
-        lastest_state_id = state_id;
+        latest_state_id_ = state_id;
     }
-    if (lastest_state_id == 0)
-        return true;
 
-    k->new_edge(lastest_state_id, lastest_state_id); // self-loop for the last state
-    // Translate formula negation.
-    spot::formula f = spot::formula::Not(this->spec_formula_.f);
-    spot::twa_graph_ptr af = spot::translator(cached_bdd_dict_).run(f);
-    return !k->intersecting_run(af);
+    kripke_graph_->new_edge(latest_state_id_, latest_state_id_); // self-loop for the last state
+    return !kripke_graph_->intersecting_run(af_);
 }

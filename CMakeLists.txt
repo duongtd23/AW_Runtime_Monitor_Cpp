@@ -36,7 +36,6 @@ link_directories(
 add_executable(monitor 
   src/planning/planning_shield.cpp
   src/planning/trajectory_revision.cpp
-  src/planning/trajectory_manipulation.cpp
   src/groundtruth/groundtruth_kinematic.cpp
   src/groundtruth/groundtruth_size.cpp
   src/localization/estimated_kinematic.cpp

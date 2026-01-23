@@ -46,6 +46,9 @@ RevisionResult TrajectoryReviser::revise(
 
     // cache the revised candidate, which is made with maximum deceleration profile
     autoware_planning_msgs::msg::Trajectory max_decel_candidate_trajectory;
+
+    float min_lateral_offset_making_out_of_drivable_area = 1e3f;
+    float max_lateral_offset_making_out_of_drivable_area = -1e3f;
     
     for (size_t i = 0; i < max_to_try; ++i) {
         const CorrectionCandidate& candidate = candidates[i];
@@ -63,9 +66,21 @@ RevisionResult TrajectoryReviser::revise(
                 break;
             }
             case CorrectionType::LATERAL_SHIFT: {
-                corrected_trajectory = applyLateralShift(
-                    original_trajectory, collision_indices, candidate.lateral_offset,
-                    drivable_area_checker, starting_point_id, ego_size, ego_center_offset);
+                if ((candidate.lateral_offset > 0.0f && candidate.lateral_offset < min_lateral_offset_making_out_of_drivable_area) ||
+                    (candidate.lateral_offset < 0.0f && candidate.lateral_offset > max_lateral_offset_making_out_of_drivable_area)) {
+                    corrected_trajectory = applyLateralShift(
+                        original_trajectory, collision_indices, candidate.lateral_offset,
+                        drivable_area_checker, starting_point_id, ego_size, ego_center_offset);
+                    if (!corrected_trajectory.has_value()) {
+                        // Update min/max lateral offsets that lead to out-of-drivable-area.
+                        // In the next cycle, no longer need to try bigger lateral offsets in the same direction.
+                        if (candidate.lateral_offset > 0.0f) {
+                            min_lateral_offset_making_out_of_drivable_area = candidate.lateral_offset;
+                        } else {
+                            max_lateral_offset_making_out_of_drivable_area = candidate.lateral_offset;
+                        }
+                    }
+                }
                 break;
             }
             case CorrectionType::COMBINED: {
@@ -137,32 +152,26 @@ std::vector<CorrectionCandidate> TrajectoryReviser::generateCandidates(
         // Positive offset (left)
         candidates.emplace_back(offset, weight, CorrectionType::LATERAL_SHIFT);
         // Negative offset (right)
-        candidates.emplace_back(-offset, weight, CorrectionType::LATERAL_SHIFT);
+        candidates.emplace_back(-offset, weight + 0.1f, CorrectionType::LATERAL_SHIFT);
     }
     
     // 3. Combined candidates (deceleration + lateral shift)
     // Combine selected deceleration profiles with selected lateral offsets
-    for (int profile_idx : config_.combined_decel_profile_indices) {
-        // Check if profile index is valid
-        if (profile_idx < 0 || profile_idx >= static_cast<int>(config_.deceleration_profiles.size())) {
-            continue;
-        }
-        
-        const auto& profile = config_.deceleration_profiles[profile_idx];
+    for (const auto& decel_profile: config_.combined_decel_profiles) {
         
         for (size_t i = 0; i < config_.combined_lateral_offsets.size(); ++i) {
             float lateral_offset = config_.combined_lateral_offsets[i];
             
             // Calculate weight as sum of individual weights plus combination penalty
-            float decel_weight = profile.weight;
+            float decel_weight = decel_profile.weight;
             float lateral_weight = config_.lateral_weight_base + i * config_.lateral_weight_factor;
             float combined_weight = config_.combined_weight_base + 
                                    decel_weight + lateral_weight + 
                                    i * config_.combined_weight_factor;
             
             // Both directions (left and right)
-            candidates.emplace_back(profile, lateral_offset, combined_weight, CorrectionType::COMBINED);
-            candidates.emplace_back(profile, -lateral_offset, combined_weight + 0.1f, CorrectionType::COMBINED);
+            candidates.emplace_back(decel_profile, lateral_offset, combined_weight, CorrectionType::COMBINED);
+            candidates.emplace_back(decel_profile, -lateral_offset, combined_weight + 0.1f, CorrectionType::COMBINED);
         }
     }
     
@@ -326,6 +335,9 @@ std::optional<autoware_planning_msgs::msg::Trajectory> TrajectoryReviser::applyL
     size_t max_collision_idx = *std::max_element(collision_indices.begin(), collision_indices.end());
     
     // Extend range for smooth transition (but not before starting_point_id)
+    int total_revised_points = config_.min_points < collision_indices.size() ? 
+                                collision_indices.size() + 10*2 
+                                : config_.min_points;
     int points_before_collision = min_collision_idx - starting_point_id;
     int desired_prior_points = (config_.min_points - (max_collision_idx - min_collision_idx))/2;
     if (desired_prior_points > points_before_collision) {
@@ -373,7 +385,7 @@ std::optional<autoware_planning_msgs::msg::Trajectory> TrajectoryReviser::applyL
         if (!drivable_area_checker.isPointInDrivableArea(
                 point.pose.position.x, point.pose.position.y)) {
             // Point outside drivable area - this shift is not feasible
-            RCLCPP_WARN(logger_, "Lateral shift resulted in point outside drivable area at index %zu", i);
+            // RCLCPP_WARN(logger_, "Lateral shift resulted in point outside drivable area at index %zu", i);
             return std::nullopt;
         }
     }
@@ -388,7 +400,7 @@ std::optional<autoware_planning_msgs::msg::Trajectory> TrajectoryReviser::applyL
     // }
     
     // Check curvature constraints
-    if (!checkCurvatureConstraints(shifted.points, shift_start)) {
+    if (!checkCurvatureConstraints(shifted.points, shift_start, shift_end)) {
         RCLCPP_WARN(logger_, "Lateral shift resulted in curvature constraint violation.");
         return std::nullopt;
     }
@@ -542,9 +554,9 @@ void TrajectoryReviser::updateHeadings(
 
 bool TrajectoryReviser::checkCurvatureConstraints(
         const std::vector<autoware_planning_msgs::msg::TrajectoryPoint>& points,
-        size_t start_idx) const {
-    
-    for (size_t i = start_idx + 1; i < points.size() - 1; ++i) {
+        size_t start_idx, size_t end_idx) const {
+
+    for (size_t i = start_idx + 1; i < end_idx - 1; ++i) {
         glm::vec2 p1(points[i - 1].pose.position.x, points[i - 1].pose.position.y);
         glm::vec2 p2(points[i].pose.position.x, points[i].pose.position.y);
         glm::vec2 p3(points[i + 1].pose.position.x, points[i + 1].pose.position.y);
@@ -552,6 +564,9 @@ bool TrajectoryReviser::checkCurvatureConstraints(
         float curvature = computeCurvature(p1, p2, p3);
         
         if (std::abs(curvature) > config_.max_curvature) {
+            if (glm::length(p2 - p1) <= 0.15f || glm::length(p3 - p2) <= 0.15f) {
+                continue; // Ignore degenerate cases
+            }
             return false;
         }
     }
