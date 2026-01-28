@@ -137,6 +137,16 @@ public:
         return copy;
     }
 
+    // clone entire stream and append a new object to the last frame
+    DataStream cloneAndAppendObject(const DataObject& obj) const {
+        if (frames_.empty()) {
+            throw std::runtime_error("Cannot clone and append object to empty DataStream.");
+        }
+        DataStream copy = clone(frames_.size());
+        copy.frames_.back().addObject(obj);
+        return copy;
+    }
+
 private:
     std::vector<Frame> frames_;  ///< Sequence of frames
 };

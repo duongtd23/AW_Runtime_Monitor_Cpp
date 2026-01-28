@@ -92,7 +92,7 @@ void AWRecorder::initializeParameters() {
     this->declare_parameter<std::vector<std::string>>("topics", topic_names_);
 
     // planning shield parameters (config in default.yaml)
-    this->declare_parameter<bool>("planning_shield_enabled", false);
+    this->declare_parameter<bool>("planning_shield", false);
     this->declare_parameter<std::string>("spec_syntax_file_path", SPEC_SYNTAX_FILE_PATH);
     this->declare_parameter<std::string>("planning_safety_spec", PLANNING_SPEC);
     this->declare_parameter<double>("speed_threshold_activation", 3.0);
@@ -134,9 +134,11 @@ void AWRecorder::initializeParameters() {
     this->declare_parameter<int>("revision_min_points", 30);
 
     // perception shield parameters
-    this->declare_parameter<bool>("perception_shield_enabled", false);
+    this->declare_parameter<bool>("perception_shield", false);
     this->declare_parameter<std::string>("perception_spec", "T");
     this->declare_parameter<double>("speed_threshold_perp_shield_activation", 3.0);
+    this->declare_parameter<int>("window_size", 3);
+    this->declare_parameter<int>("max_prediction_frames", 3);
 }
 
 /**
@@ -150,12 +152,18 @@ void AWRecorder::perceptionShieldInit() {
 
     if (perception_shield_enabled_) {
         std::string perception_spec_str;
-        double speed_threshold_activation;  
+        double speed_threshold_activation;
+        int max_prediction_frames;
+        int window_size;
         this->get_parameter("speed_threshold_perp_shield_activation", speed_threshold_activation);
         this->get_parameter("perception_spec", perception_spec_str);
-        
-        this->perception_shield_ = PerceptionShield(perception_spec_str, speed_threshold_activation);
-        RCLCPP_INFO(this->get_logger(), "Perception shield is enabled, formula: %s", perception_shield_.getSpecFormula()->toString().c_str());
+        this->get_parameter("max_prediction_frames", max_prediction_frames);
+        this->get_parameter("window_size", window_size);
+
+        this->perception_shield_ = PerceptionShield(perception_spec_str, window_size, speed_threshold_activation, max_prediction_frames);
+
+        RCLCPP_INFO(this->get_logger(), "Perception shield is enabled, formula: %s, window size: %d, speed threshold: %f, max prediction frames: %d", 
+            perception_shield_.getSpecFormula()->toString().c_str(), window_size, speed_threshold_activation, max_prediction_frames);
     }
 }
 
@@ -237,8 +245,8 @@ AWRecorder::AWRecorder() : Node("aw_recorder") {
     this->get_parameter("output_path", output_path_);
     this->get_parameter("no_sim", no_sim_);
     this->get_parameter("topics", topic_names_);
-    this->get_parameter("perception_shield_enabled", perception_shield_enabled_);
-    this->get_parameter("planning_shield_enabled", planning_shield_enabled_);
+    this->get_parameter("perception_shield", perception_shield_enabled_);
+    this->get_parameter("planning_shield", planning_shield_enabled_);
 
     // // print all topic names
     // RCLCPP_INFO(this->get_logger(), "Topics to record:");

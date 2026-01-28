@@ -80,6 +80,40 @@ std::vector<std::string> findDroppedObjectIds(
 }
 
 /**
+ * @brief Convert ROS object to tqtl DataObject
+ */
+tqtl::DataObject rosObjectToDataObject(
+        const autoware_perception_msgs::msg::PredictedObject& ros_obj) {
+    std::string id = uuidstr(ros_obj.object_id.uuid);
+    double probability = ros_obj.existence_probability;
+    tqtl::ObjectClass cls = takeMostHighProbClass(ros_obj.classification);
+
+    glm::vec3 position = rosPointToVector3(ros_obj.kinematics.initial_pose_with_covariance.pose.position);
+    glm::vec3 velocity = rosPointToVector3(ros_obj.kinematics.initial_twist_with_covariance.twist.linear);
+
+    return tqtl::DataObject(id, cls, probability, position, velocity);
+}
+
+/**
+ * @brief Predict the dropped object state from previous detection
+ */
+autoware_perception_msgs::msg::PredictedObject predictDroppedObjectFromPreviousDetection(
+        const PerceptionShield::DroppedObjectPrediction& previous_detection,
+        double curr_timest) {
+    double last_timest = previous_detection.timestamp;
+    double delta_t = curr_timest - last_timest;
+    double vel_x = previous_detection.predicted_object.kinematics.initial_twist_with_covariance.twist.linear.x;
+    double vel_y = previous_detection.predicted_object.kinematics.initial_twist_with_covariance.twist.linear.y;
+    double vel_z = previous_detection.predicted_object.kinematics.initial_twist_with_covariance.twist.linear.z;
+    // Use the velocity to update the position
+    auto predicted_obj = previous_detection.predicted_object;
+    predicted_obj.kinematics.initial_pose_with_covariance.pose.position.x += vel_x * delta_t;
+    predicted_obj.kinematics.initial_pose_with_covariance.pose.position.y += vel_y * delta_t;
+    predicted_obj.kinematics.initial_pose_with_covariance.pose.position.z += vel_z * delta_t;
+    return predicted_obj;
+}
+
+/**
  * @brief Verify the perception message against the specification
  * 
  * If the verification fails, return a modified message with predicted states for dropped objects.
@@ -93,16 +127,10 @@ std::optional<autoware_perception_msgs::msg::PredictedObjects> PerceptionShield:
         const autoware_perception_msgs::msg::PredictedObjects& perp_obj_msg, nlohmann::json& recorded_data) {
     auto start_time = std::chrono::high_resolution_clock::now();
     tqtl::Frame frame;
-    frame.setTimestamp(timestamp(perp_obj_msg.header.stamp));
+    const double curr_timest = timestamp(perp_obj_msg.header.stamp);
+    frame.setTimestamp(curr_timest);
     for (const auto& entry : perp_obj_msg.objects) {
-        std::string id = uuidstr(entry.object_id.uuid);
-        double probability = entry.existence_probability;
-        tqtl::ObjectClass cls = takeMostHighProbClass(entry.classification);
-
-        glm::vec3 position = rosPointToVector3(entry.kinematics.initial_pose_with_covariance.pose.position);
-        glm::vec3 velocity = rosPointToVector3(entry.kinematics.initial_twist_with_covariance.twist.linear);
-
-        frame.addObject(tqtl::DataObject(id, cls, probability, position, velocity));
+        frame.addObject(rosObjectToDataObject(entry));
     }
     perp_data_stream_.addFrame(frame);
 
@@ -112,49 +140,79 @@ std::optional<autoware_perception_msgs::msg::PredictedObjects> PerceptionShield:
 
     // only verify when the ego vehicle speed is above the threshold
     if (getCurrentSpeed(recorded_data) >= this->speed_threshold_activation_) {
+        auto cloned_msg = perp_obj_msg;
+        bool revised = false;
+        for (auto it = dropped_object_predictions_.begin();
+                it != dropped_object_predictions_.end(); ) {
+            revised = true;
+            auto& previous_detection = *it;
+
+            if(!frame.hasObject(uuidstr(previous_detection.predicted_object.object_id.uuid))) {
+                // predict based on previously predicted velocity and pose
+                auto predicted_obj = predictDroppedObjectFromPreviousDetection(
+                    previous_detection, curr_timest);
+                cloned_msg.objects.push_back(predicted_obj);
+            }
+
+            // update the dropped object prediction record
+            previous_detection.no_frames_fixed += 1;
+
+            // check if we have exceeded the max prediction frames
+            if (previous_detection.no_frames_fixed >= max_prediction_frames_) {
+                it = dropped_object_predictions_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        
+        // Evaluate the perception specification
         tqtl::QualityValue result = tqtl::evaluate(perception_spec_, perp_data_stream_, 0);
         if (!result.isSatisfied()) {
             // --- Verification failed, return modified msg ---
             if (recorded_perp_msgs_.empty()) {
                 RCLCPP_WARN(logger_, "No available history data.");
-                return perp_obj_msg;
+                return revised ? std::make_optional(cloned_msg) : std::nullopt;
             }
             auto last_perp_msg = recorded_perp_msgs_.back();
             auto current_ids = perp_data_stream_.getFrame(perp_data_stream_.length() - 1).getObjectIds();
             auto dropped_ids = findDroppedObjectIds(current_ids, last_perp_msg);
             
-            // for debugging
-            // RCLCPP_INFO(logger_, "Current object IDs:");
-            // for (const auto& id : current_ids) {
-            //     RCLCPP_INFO(logger_, " - %s", id.c_str());
-            // }
-            // RCLCPP_INFO(logger_, "Dropped object IDs:");
-            // for (const auto& id : dropped_ids) {
-            //     RCLCPP_INFO(logger_, " - %s", id.c_str());
-            // }
-            
             if (dropped_ids.empty()) {
                 RCLCPP_ERROR(logger_, "No dropped objects found, but spec violated.");
-                RCLCPP_WARN(logger_, "Timestamp: %f", timestamp(perp_obj_msg.header.stamp));
+                RCLCPP_WARN(logger_, "Timestamp: %f", curr_timest);
                 std::cout << "Data stream: " << perp_data_stream_ << std::endl;
-                return perp_obj_msg;
+                return revised ? std::make_optional(cloned_msg) : std::nullopt;
             }
-            auto cloned_msg = perp_obj_msg;
             for (const auto& drop_id : dropped_ids) {
+                // predict the dropped object state
                 auto history = extractObjectHistory(drop_id, recorded_perp_msgs_);
                 KalmanObjectPrediction kalman_predictor;
                 auto predicted_state = kalman_predictor.predictDroppedObject(
                     drop_id, history, 
                     perp_data_stream_.getFrame(perp_data_stream_.length() - 1).getTimestamp());
-                cloned_msg.objects.push_back(predicted_state);
+                
+                // confirm if adding this predicted object will help satisfy the spec
+                auto data_obj = rosObjectToDataObject(predicted_state);
+                auto test_stream = perp_data_stream_.cloneAndAppendObject(data_obj);
+                auto test_result = tqtl::evaluate(perception_spec_, test_stream, 0);
+                if (test_result.isSatisfied()) {
+                    revised = true;
+                    cloned_msg.objects.push_back(predicted_state);
+
+                    // record this dropped object prediction
+                    DroppedObjectPrediction drop_record;
+                    drop_record.timestamp = curr_timest;
+                    drop_record.predicted_object = predicted_state;
+                    drop_record.no_frames_fixed = 1;
+                    dropped_object_predictions_.push_back(drop_record);
+
+                    auto end_time =  std::chrono::high_resolution_clock::now();
+                    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+                    RCLCPP_WARN(logger_, "Spec violated (verif time: %f milliseconds).", duration.count() / 1000.0);
+                }
             }
-
-            auto end_time =  std::chrono::high_resolution_clock::now();
-            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
-            RCLCPP_WARN(logger_, "Perception shield: Spec violated (verif time: %ld microseconds).", duration.count());
-
-            return cloned_msg;
         }
+        return revised ? std::make_optional(cloned_msg) : std::nullopt;
     }
     // If the verification succeeds, return an empty optional
     return std::nullopt;

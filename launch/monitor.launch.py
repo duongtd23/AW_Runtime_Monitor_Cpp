@@ -9,14 +9,14 @@ def generate_launch_description():
         'output_path',
         default_value='recorded_data'
     )
-    planning_shield_enabled = DeclareLaunchArgument(
-        'planning_shield_enabled',
-        default_value='false',
-    )
-    perception_shield_enabled = DeclareLaunchArgument(
-        'perception_shield_enabled',
-        default_value='false',
-    )
+    # planning_shield = DeclareLaunchArgument(
+    #     'planning_shield',
+    #     default_value='false',
+    # )
+    # perception_shield = DeclareLaunchArgument(
+    #     'perception_shield',
+    #     default_value='false',
+    # )
     no_sim = DeclareLaunchArgument(
         'no_sim',
         default_value='1',
@@ -28,8 +28,8 @@ def generate_launch_description():
 
     return LaunchDescription([
         output_arg,
-        planning_shield_enabled,
-        perception_shield_enabled,
+        # planning_shield,
+        # perception_shield,
         no_sim,
         Node(
             package='aw_runtime_monitor',
@@ -38,8 +38,8 @@ def generate_launch_description():
             output='screen',
             parameters=[config,  # <-- default config file
                         {'output_path': LaunchConfiguration('output_path'),
-                         'planning_shield_enabled': LaunchConfiguration('planning_shield_enabled'),
-                         'perception_shield_enabled': LaunchConfiguration('perception_shield_enabled'),
+                        #  'planning_shield': LaunchConfiguration('planning_shield'),
+                        #  'perception_shield': LaunchConfiguration('perception_shield'),
                          'no_sim': LaunchConfiguration('no_sim')}
                         ]  
         )

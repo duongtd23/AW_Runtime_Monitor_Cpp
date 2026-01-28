@@ -17,16 +17,17 @@ aw_recorder:
 ## ============================================================================
 ## For perception shield
 ## ============================================================================
-    # perception_shield_enabled: true
+    perception_shield: true
     perception_spec: '[](x.(forall id@x. ((present(x+1, id)) -> present(x+2, id) )))'
     window_size: 3
     # Don't activate the shield if the ego speed is below this threshold
     speed_threshold_perp_shield_activation: 3.0 # m/s
+    max_prediction_frames: 3
 
 ## ============================================================================
 ## For planning shield
 ## ============================================================================
-    # planning_shield_enabled: true 
+    planning_shield: true 
     planning_safety_spec: '[] (pathConfidence >= 0.1 /\ time <= 3.0 -> ~ collision)'
     spec_syntax_file_path: 'formal_spec/syntax.maude'
     
@@ -36,8 +37,6 @@ aw_recorder:
     time_bound: 10.0  # seconds
     # Ignore perceived object if its distance to ego always greater than this threshold in all planning points
     distance_bound: 80.0  # meters
-
-    # Number of consecutive frames that must be evaluated as unsafe before activating the safety shield.
     # unsafe_confirmation_frames: 2
 
     ## TrajectoryReviser config.

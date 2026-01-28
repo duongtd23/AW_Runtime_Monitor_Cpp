@@ -335,17 +335,20 @@ std::optional<autoware_planning_msgs::msg::Trajectory> TrajectoryReviser::applyL
     size_t max_collision_idx = *std::max_element(collision_indices.begin(), collision_indices.end());
     
     // Extend range for smooth transition (but not before starting_point_id)
-    int total_revised_points = config_.min_points < collision_indices.size() ? 
-                                collision_indices.size() + 10*2 
-                                : config_.min_points;
     int points_before_collision = min_collision_idx - starting_point_id;
     int desired_prior_points = (config_.min_points - (max_collision_idx - min_collision_idx))/2;
     if (desired_prior_points > points_before_collision) {
         desired_prior_points = points_before_collision;
     }
 
-    size_t shift_start = min_collision_idx - desired_prior_points;
-    size_t shift_end = std::max(max_collision_idx, shift_start + config_.min_points);
+    size_t shift_start = min_collision_idx - 10;
+    if (shift_start <= starting_point_id) {
+        shift_start = starting_point_id + 1;
+    }
+    size_t shift_end = max_collision_idx + 10;
+    // if (shift_end - shift_start < config_.min_points) {
+    //     shift_end = shift_start + config_.min_points;
+    // }
 
     // RCLCPP_INFO(logger_, "Shift range: [%zu, %zu] (min_collision_idx: %zu, max_collision_idx: %zu)",
                 // shift_start, shift_end, min_collision_idx, max_collision_idx);
