@@ -66,7 +66,11 @@ enum class TokenType {
     DIST,           // dist, distance
     IOU,            // IoU, iou
     PRESENT,        // present
-    
+
+    // Predicates related to ego vehicle
+    DIST_EGO,       // dist_ego
+    ANGLE_EGO,      // angle_ego
+
     // Punctuation
     LPAREN,         // (
     RPAREN,         // )
@@ -300,6 +304,8 @@ private:
         if (value == "dist" || value == "distance") return Token(TokenType::DIST, value, start);
         if (value == "present") return Token(TokenType::PRESENT, value, start);
         if (value == "IoU" || value == "iou") return Token(TokenType::IOU, value, start);
+        if (value == "dist_ego") return Token(TokenType::DIST_EGO, value, start);
+        if (value == "angle_ego") return Token(TokenType::ANGLE_EGO, value, start);
         
         return Token(TokenType::IDENTIFIER, value, start);
     }
@@ -651,6 +657,14 @@ private:
         if (check(TokenType::PRESENT)) {
             return parsePresentPredicate();
         }
+
+        if (check(TokenType::DIST_EGO)) {
+            return parseEgoDistancePredicate();
+        }
+
+        if (check(TokenType::ANGLE_EGO)) {
+            return parseEgoAnglePredicate();
+        }
         
         throw ParseError("Unexpected token: " + currentToken_.value, currentToken_.position);
     }
@@ -770,6 +784,38 @@ private:
         expect(TokenType::RPAREN, "Expected ')'");
         
         return std::make_shared<ObjectPresentPredicate>(frameExpr, objectVar);
+    }
+
+    FormulaPtr parseEgoDistancePredicate() {
+        advance(); // consume 'dist_ego'
+        expect(TokenType::LPAREN, "Expected '('");
+        FrameExpr frameExpr = parseFrameExprInsideFuncParams();
+        expect(TokenType::COMMA, "Expected ','");
+        std::string objVar = expect(TokenType::IDENTIFIER, "Expected object variable").value;
+        expect(TokenType::RPAREN, "Expected ')'");
+        
+        ComparisonOp op = parseComparisonOp();
+        
+        Token numToken = expect(TokenType::NUMBER, "Expected distance threshold");
+        double threshold = std::stod(numToken.value);
+        
+        return std::make_shared<DistanceToEgoPredicate>(frameExpr, objVar, op, threshold);
+    }
+
+    FormulaPtr parseEgoAnglePredicate() {
+        advance(); // consume 'angle_ego'
+        expect(TokenType::LPAREN, "Expected '('");
+        FrameExpr frameExpr = parseFrameExprInsideFuncParams();
+        expect(TokenType::COMMA, "Expected ','");
+        std::string objVar = expect(TokenType::IDENTIFIER, "Expected object variable").value;
+        expect(TokenType::RPAREN, "Expected ')'");
+        
+        ComparisonOp op = parseComparisonOp();
+        
+        Token numToken = expect(TokenType::NUMBER, "Expected angle threshold");
+        double threshold = std::stod(numToken.value);
+        
+        return std::make_shared<EgoViewAnglePredicate>(frameExpr, objVar, op, threshold);
     }
 };
 

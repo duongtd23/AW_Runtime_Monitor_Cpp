@@ -30,7 +30,7 @@ public:
     }
 
     std::optional<autoware_perception_msgs::msg::PredictedObjects>
-    verify(const autoware_perception_msgs::msg::PredictedObjects& perp_obj_msg, nlohmann::json& recorded_data);
+    verify(const autoware_perception_msgs::msg::PredictedObjects& perp_obj_msg, const nlohmann::json& recorded_data);
 
     tqtl::FormulaPtr getSpecFormula() const {
         return perception_spec_;

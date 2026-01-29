@@ -198,6 +198,14 @@ public:
         return addObject(id, stringToObjectClass(cls), probability, position, velocity, bbox);
     }
 
+    DataStreamBuilder& setEgoObject(const EgoObject& ego) {
+        if (stream_.isEmpty()) {
+            stream_.addFrame();
+        }
+        stream_.getFrame(stream_.getFrameCount() - 1).setEgoObject(ego);
+        return *this;
+    }
+
     DataStream build() {
         return std::move(stream_);
     }

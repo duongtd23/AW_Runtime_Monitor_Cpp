@@ -118,6 +118,57 @@ private:
     std::unordered_map<std::string, AttributeValue> attributes_; ///< Custom attributes
 };
 
-}
+/**
+ * @brief Represents the ego vehicle at a scene
+ * 
+ * It contains 3D position, (linear) velocity, Euler angles (roll, pitch, yaw) in degrees in range [-180, 180].
+ */
+class EgoObject {
+public:
+    EgoObject() 
+        : position_(0.0f), velocity_(0.0f), eulerAngles_(0.0f) {}
+
+    EgoObject(const glm::vec3& position, const glm::vec3& velocity, const glm::vec3& eulerAngles)
+        : position_(position), velocity_(velocity), eulerAngles_(eulerAngles) {}
+
+    const glm::vec3& getPosition() const { return position_; }
+    const glm::vec3& getVelocity() const { return velocity_; }
+    const glm::vec3& getEulerAngles() const { return eulerAngles_; }
+
+    void setPosition(const glm::vec3& pos) { position_ = pos; }
+    void setVelocity(const glm::vec3& vel) { velocity_ = vel; }
+    void setEulerAngles(const glm::vec3& angles) { eulerAngles_ = angles; }
+
+    std::string toString() const {
+        return "(Position: " + glm::to_string(position_) + 
+               ", Velocity: " + glm::to_string(velocity_) + 
+               ", Euler Angles: " + glm::to_string(eulerAngles_) + ")";
+    }
+    friend std::ostream& operator<<(std::ostream& os, const EgoObject& ego) {
+        os << ego.toString();
+        return os;
+    }
+
+    glm::vec3 getForwardVector() const {
+        // Convert Euler angles from degrees to radians
+        float pitch = glm::radians(eulerAngles_.y);
+        float yaw = glm::radians(eulerAngles_.z);
+
+        // Calculate forward vector
+        glm::vec3 forward;
+        forward.x = cos(pitch) * cos(yaw);
+        forward.y = cos(pitch) * sin(yaw);
+        forward.z = sin(pitch);
+
+        return glm::normalize(forward);
+    }
+
+private:
+    glm::vec3 position_;    ///< 3D position (x, y, z) of the ego vehicle
+    glm::vec3 velocity_;    ///< 3D velocity (vx, vy, vz) of the ego vehicle
+    glm::vec3 eulerAngles_; ///< Euler angles (roll, pitch, yaw) in degrees, range [-180, 180]
+};
+
+} // namespace tqtl
 
 #endif // TQTL_DATA_OBJECT_HPP

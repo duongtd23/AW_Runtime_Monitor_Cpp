@@ -114,6 +114,31 @@ autoware_perception_msgs::msg::PredictedObject predictDroppedObjectFromPreviousD
 }
 
 /**
+ * @brief Extract the latest ego state from the vehicle estimated kinematic in recorded data
+ */
+tqtl::EgoObject extractEgoLatestState(const nlohmann::json& recorded_data) {
+    if (!recorded_data.contains(EstimatedKinematicTopic::TRACE_KEY()) || 
+        recorded_data[EstimatedKinematicTopic::TRACE_KEY()].empty()) {
+            return tqtl::EgoObject();
+    }
+    const auto& ego_states = recorded_data[EstimatedKinematicTopic::TRACE_KEY()];
+    const auto& latest_ego = ego_states.back();
+    glm::vec3 position(
+        latest_ego["pose"]["position"]["x"].get<double>(),
+        latest_ego["pose"]["position"]["y"].get<double>(),
+        latest_ego["pose"]["position"]["z"].get<double>());
+    glm::vec3 velocity(
+        latest_ego["twist"]["linear"]["x"].get<double>(),
+        latest_ego["twist"]["linear"]["y"].get<double>(),
+        latest_ego["twist"]["linear"]["z"].get<double>());
+    glm::vec3 euler_angles(
+        latest_ego["pose"]["rotation"]["x"].get<double>(),
+        latest_ego["pose"]["rotation"]["y"].get<double>(),
+        latest_ego["pose"]["rotation"]["z"].get<double>());
+    return tqtl::EgoObject(position, velocity, euler_angles);
+}
+
+/**
  * @brief Verify the perception message against the specification
  * 
  * If the verification fails, return a modified message with predicted states for dropped objects.
@@ -124,7 +149,8 @@ autoware_perception_msgs::msg::PredictedObject predictDroppedObjectFromPreviousD
  * @return std::optional<autoware_perception_msgs::msg::PredictedObjects> Modified message if verification fails, else std::nullopt
  */
 std::optional<autoware_perception_msgs::msg::PredictedObjects> PerceptionShield::verify(
-        const autoware_perception_msgs::msg::PredictedObjects& perp_obj_msg, nlohmann::json& recorded_data) {
+        const autoware_perception_msgs::msg::PredictedObjects& perp_obj_msg, 
+        const nlohmann::json& recorded_data) {
     auto start_time = std::chrono::high_resolution_clock::now();
     tqtl::Frame frame;
     const double curr_timest = timestamp(perp_obj_msg.header.stamp);
@@ -132,6 +158,7 @@ std::optional<autoware_perception_msgs::msg::PredictedObjects> PerceptionShield:
     for (const auto& entry : perp_obj_msg.objects) {
         frame.addObject(rosObjectToDataObject(entry));
     }
+    frame.setEgoObject(extractEgoLatestState(recorded_data));
     perp_data_stream_.addFrame(frame);
 
     while (perp_data_stream_.getFrameCount() > window_size_) {
@@ -208,7 +235,7 @@ std::optional<autoware_perception_msgs::msg::PredictedObjects> PerceptionShield:
 
                     auto end_time =  std::chrono::high_resolution_clock::now();
                     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
-                    RCLCPP_WARN(logger_, "Spec violated (verif time: %f milliseconds).", duration.count() / 1000.0);
+                    RCLCPP_WARN(logger_, "Spec violated (verif time: %.1f milliseconds).", duration.count() / 1000.0);
                 }
             }
         }

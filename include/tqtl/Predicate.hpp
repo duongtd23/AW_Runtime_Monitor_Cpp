@@ -10,6 +10,7 @@
 #include <memory>
 #include <cmath>
 #include <optional>
+#include <glm/gtx/vector_angle.hpp>  // for glm::angle
 
 namespace tqtl {
 
@@ -496,6 +497,125 @@ private:
     std::string objectVar1_;
     FrameExpr frameExpr2_;
     std::string objectVar2_;
+    ComparisonOp op_;
+    double threshold_;
+};
+
+
+// ============================================================================
+// Predicates related to Ego vehicle (unified for <, <=, >, >=)
+// ============================================================================
+/**
+ * @brief Predicate for distance to ego vehicle: dist_ego(timeExpr, objectVar) op threshold
+ * 
+ * Distance is computed between the object's position and the ego vehicle's position.
+ */
+class DistanceToEgoPredicate : public PredicateFormula {
+public:
+    DistanceToEgoPredicate(const FrameExpr& frameExpr, const std::string& objectVar,
+                          ComparisonOp op, double threshold)
+        : frameExpr_(frameExpr), objectVar_(objectVar), op_(op), threshold_(threshold) {}
+
+    std::string toString() const override {
+        return "dist_ego(" + frameExpr_.toString() + ", " + objectVar_ + ") " + 
+               comparisonOpToString(op_) + " " + std::to_string(threshold_);
+    }
+
+    void accept(FormulaVisitor& visitor) const override {
+        visitor.visit(*this);
+    }
+
+    FormulaPtr clone() const override {
+        return std::make_shared<DistanceToEgoPredicate>(frameExpr_, objectVar_, op_, threshold_);
+    }
+
+    const FrameExpr& getFrameExpr() const { return frameExpr_; }
+    const std::string& getObjectVar() const { return objectVar_; }
+    ComparisonOp getOp() const { return op_; }
+    double getThreshold() const { return threshold_; }
+
+    QualityValue evaluate(const DataStream& stream, size_t /*frameIndex*/, const Environment& env) const {
+        size_t baseFrame = env.getTime(frameExpr_.varName);
+        auto frameOrNull = computeRefFrame(frameExpr_, baseFrame, stream);
+        if (!frameOrNull.has_value()) {
+            return QualityValue::POS_INF;
+        }
+        size_t frame = frameOrNull.value();
+
+        std::string objId = env.getObject(objectVar_);
+        const DataObject* obj = stream.retrieve(frame, objId);
+        if (!obj) {
+            return QualityValue::NEG_INF;
+        }
+
+        EgoObject ego = stream.getFrame(frame).getEgoObject();
+        glm::vec3 egoPos = ego.getPosition();
+        glm::vec3 objPos = obj->getPosition();
+        double distance = glm::length(objPos - egoPos);
+
+        return computeRobustness(distance, threshold_, op_);
+    }
+
+private:
+    FrameExpr frameExpr_;
+    std::string objectVar_;
+    ComparisonOp op_;
+    double threshold_;
+};
+
+/**
+ * @brief Predicate for ego view angle to object: angle_ego(timeExpr, objectVar) op threshold
+ * 
+ * For example: angle_ego(x, id) > -30.0 && angle_ego(x, id) < 30.0
+ *   says that the object with id 'id' is within the ego vehicle's forward view of 30 degrees at time 'x'.
+ * View angle is computed as the angle between the ego vehicle's forward direction
+ * and the vector pointing from the ego vehicle to the object.
+ */
+class EgoViewAnglePredicate : public PredicateFormula {
+public:
+    EgoViewAnglePredicate(const FrameExpr& frameExpr, const std::string& objectVar,
+                          ComparisonOp op, double threshold)
+        : frameExpr_(frameExpr), objectVar_(objectVar), op_(op), threshold_(threshold) {}
+    std::string toString() const override {
+        return "angle_ego(" + frameExpr_.toString() + ", " + objectVar_ + ") " + 
+               comparisonOpToString(op_) + " " + std::to_string(threshold_);
+    }
+    void accept(FormulaVisitor& visitor) const override {
+        visitor.visit(*this);
+    }
+    FormulaPtr clone() const override {
+        return std::make_shared<EgoViewAnglePredicate>(frameExpr_, objectVar_, op_, threshold_);
+    }
+    const FrameExpr& getFrameExpr() const { return frameExpr_; }
+    const std::string& getObjectVar() const { return objectVar_; }
+    ComparisonOp getOp() const { return op_; }
+    double getThreshold() const { return threshold_; }
+
+    QualityValue evaluate(const DataStream& stream, size_t /*frameIndex*/, const Environment& env) const {
+        size_t baseFrame = env.getTime(frameExpr_.varName);
+        auto frameOrNull = computeRefFrame(frameExpr_, baseFrame, stream);
+        if (!frameOrNull.has_value()) {
+            return QualityValue::POS_INF;
+        }
+        size_t frame = frameOrNull.value();
+
+        std::string objId = env.getObject(objectVar_);
+        const DataObject* obj = stream.retrieve(frame, objId);
+        if (!obj) {
+            return QualityValue::NEG_INF;
+        }
+
+        EgoObject ego = stream.getFrame(frame).getEgoObject();
+        glm::vec3 egoPos = ego.getPosition();
+        glm::vec3 objPos = obj->getPosition();
+        double angle = glm::degrees(glm::orientedAngle(glm::normalize(objPos - egoPos), glm::normalize(ego.getForwardVector()), glm::vec3(0, 0, 1)));
+
+        return computeRobustness(angle, threshold_, op_);
+    }
+
+private:
+    FrameExpr frameExpr_;
+    std::string objectVar_;
     ComparisonOp op_;
     double threshold_;
 };

@@ -426,6 +426,14 @@ private:
         if (const auto* presentPred = dynamic_cast<const ObjectPresentPredicate*>(formula)) {
             return presentPred->evaluate(stream, frameIndex, env);
         }
+
+        // Ego-related predicates
+        if (const auto* egoDistPred = dynamic_cast<const DistanceToEgoPredicate*>(formula)) {
+            return egoDistPred->evaluate(stream, frameIndex, env);
+        }
+        if (const auto* egoAnglePred = dynamic_cast<const EgoViewAnglePredicate*>(formula)) {
+            return egoAnglePred->evaluate(stream, frameIndex, env);
+        }
         
         throw std::runtime_error("Unknown predicate type: " + formula->toString());
     }

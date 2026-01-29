@@ -111,10 +111,15 @@ public:
         return os;
     }
 
+    const EgoObject& getEgoObject() const { return egoObject_; }
+    void setEgoObject(const EgoObject& ego) { egoObject_ = ego; }
+    void setEgoObject(EgoObject&& ego) { egoObject_ = std::move(ego); }
+
 private:
     double timestamp_;                              ///< Frame timestamp/index
     std::vector<DataObject> objects_;               ///< Objects in this frame
     std::unordered_map<std::string, size_t> objectIndex_;   ///< Map from object ID to index
+    EgoObject egoObject_;                            ///< Ego vehicle information
 };
 
 }
