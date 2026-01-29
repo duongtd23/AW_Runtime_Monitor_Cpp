@@ -501,6 +501,92 @@ private:
     double threshold_;
 };
 
+/**
+ * @brief Predicate for distance between object id1 at time t1 and
+ *    the estimated position of object id2 at time t2_est.
+ * Object id2 does not exist in t2_est, so its position is estimated based on its
+ * position and velocity at frame t2_ref.
+ *
+ * Syntax: dist_est(t1, id1, t2_ref, id2, t2_est) op threshold
+ * 
+ * This measures the Euclidean distance between the position of object id1 at frame t1
+ * and the estimated position of object id2 at frame t2_est, where the estimation is based
+ * on the position and velocity of object id2 at frame t2_ref.
+ */
+class DistanceEstimationPredicate : public PredicateFormula {
+public:
+    DistanceEstimationPredicate(const FrameExpr& frameExpr1, const std::string& objectVar1,
+                                const FrameExpr& frameRefExpr2, const std::string& objectVar2,
+                                const FrameExpr& frameEstimationExpr2, ComparisonOp op, double threshold)
+        : frameExpr1_(frameExpr1), objectVar1_(objectVar1),
+          frameRefExpr2_(frameRefExpr2), objectVar2_(objectVar2),
+          frameEstimationExpr2_(frameEstimationExpr2), op_(op), threshold_(threshold) {}
+    std::string toString() const override {
+        return "dist_est(" + frameExpr1_.toString() + ", " + objectVar1_ + ", " +
+               frameRefExpr2_.toString() + ", " + objectVar2_ + ", " +
+               frameEstimationExpr2_.toString() + ") " +
+               comparisonOpToString(op_) + " " + std::to_string(threshold_);
+    }
+    void accept(FormulaVisitor& visitor) const override {
+        visitor.visit(*this);
+    }
+    FormulaPtr clone() const override {
+        return std::make_shared<DistanceEstimationPredicate>(
+            frameExpr1_, objectVar1_,
+            frameRefExpr2_, objectVar2_,
+            frameEstimationExpr2_, op_, threshold_);
+    }
+    QualityValue evaluate(const DataStream& stream, size_t /*frameIndex*/, const Environment& env) const {
+        size_t baseFrame1 = env.getTime(frameExpr1_.varName);
+        size_t baseFrameRef2 = env.getTime(frameRefExpr2_.varName);
+        size_t baseFrameEst2 = env.getTime(frameEstimationExpr2_.varName);
+        auto frameOrNull1 = computeRefFrame(frameExpr1_, baseFrame1, stream);
+        auto frameOrNullRef2 = computeRefFrame(frameRefExpr2_, baseFrameRef2, stream);
+        auto frameOrNullEst2 = computeRefFrame(frameEstimationExpr2_, baseFrameEst2, stream);
+
+        if (!frameOrNull1.has_value() || !frameOrNullRef2.has_value() || !frameOrNullEst2.has_value()) {
+            return QualityValue::POS_INF;
+        }
+        
+        size_t frame1 = frameOrNull1.value();
+        size_t frameRef2 = frameOrNullRef2.value();
+        size_t frameEst2 = frameOrNullEst2.value();
+        if (frameEst2 < frameRef2) {
+            throw std::invalid_argument("Estimation frame must be after reference frame in predicate: " + toString());
+        }
+
+        std::string objId1 = env.getObject(objectVar1_);
+        std::string objId2 = env.getObject(objectVar2_);
+
+        const DataObject* obj1 = stream.retrieve(frame1, objId1);
+        const DataObject* obj2Ref = stream.retrieve(frameRef2, objId2);
+
+        if (!obj1 || !obj2Ref) {
+            return QualityValue::NEG_INF;
+        }
+
+        // Estimate position of obj2 at frameEst2 based on its position and velocity at frameRef2
+        float deltaTime = stream.getFrame(frameEst2).getTimestamp() - stream.getFrame(frameRef2).getTimestamp();
+        glm::vec3 estimatedPos2 = obj2Ref->getPosition() + obj2Ref->getVelocity() * deltaTime;
+
+        // Compute Euclidean distance between obj1 position and estimated obj2 position
+        glm::vec3 diff = obj1->getPosition() - estimatedPos2;
+        if (abs(diff.z) < 4.0f)
+            diff.z = 0.0f;  // Ignore Z-axis for distance computation
+        double distance = glm::length(diff);
+        return computeRobustness(distance, threshold_, op_);
+    }
+
+private:
+    FrameExpr frameExpr1_;
+    std::string objectVar1_;
+    FrameExpr frameRefExpr2_;
+    std::string objectVar2_;
+    FrameExpr frameEstimationExpr2_;
+    ComparisonOp op_;
+    double threshold_;
+};
+
 
 // ============================================================================
 // Predicates related to Ego vehicle (unified for <, <=, >, >=)

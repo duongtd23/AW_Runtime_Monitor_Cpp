@@ -23,7 +23,8 @@ aw_recorder:
         [](x.(forall id@x. (
                     (dist_ego(x,id) < 50 && angle_ego(x,id) > -60 && angle_ego(x,id) < 60 
                         && present(x+1, id)) 
-                    -> present(x+2, id) )))
+                    -> (present(x+2, id) || exists id2@(x+2). (dist_est(x+2,id2,x+1,id,x+2) < 0.5)) 
+            )))
     window_size: 3
     # Don't activate the shield if the ego speed is below this threshold
     speed_threshold_perp_shield_activation: 3.0 # m/s

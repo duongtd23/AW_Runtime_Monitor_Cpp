@@ -417,6 +417,10 @@ private:
             return distPred->evaluate(stream, frameIndex, env);
         }
 
+        if (const auto* distEstPred = dynamic_cast<const DistanceEstimationPredicate*>(formula)) {
+            return distEstPred->evaluate(stream, frameIndex, env);
+        }
+
         // Speed predicate
         if (const auto* speedPred = dynamic_cast<const SpeedPredicate*>(formula)) {
             return speedPred->evaluate(stream, frameIndex, env);

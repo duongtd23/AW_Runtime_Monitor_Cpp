@@ -66,6 +66,7 @@ enum class TokenType {
     DIST,           // dist, distance
     IOU,            // IoU, iou
     PRESENT,        // present
+    DIST_EST,       // dist_est, dist_estimatation
 
     // Predicates related to ego vehicle
     DIST_EGO,       // dist_ego
@@ -302,6 +303,7 @@ private:
         if (value == "C" || value == "Class") return Token(TokenType::CLASS, value, start);
         if (value == "P" || value == "Prob") return Token(TokenType::PROB, value, start);
         if (value == "dist" || value == "distance") return Token(TokenType::DIST, value, start);
+        if (value == "dist_est" || value == "dist_estimation") return Token(TokenType::DIST_EST, value, start);
         if (value == "present") return Token(TokenType::PRESENT, value, start);
         if (value == "IoU" || value == "iou") return Token(TokenType::IOU, value, start);
         if (value == "dist_ego") return Token(TokenType::DIST_EGO, value, start);
@@ -649,6 +651,10 @@ private:
         if (check(TokenType::DIST)) {
             return parseDistancePredicate();
         }
+
+        if (check(TokenType::DIST_EST)) {
+            return parseDistanceEstimationPredicate();
+        }
         
         if (check(TokenType::IOU)) {
             return parseIoUPredicate();
@@ -752,6 +758,28 @@ private:
         if (objVar2.empty())
             return predicate::Distance(frameExpr1, frameExpr2, objVar1, op, threshold);
         return predicate::DistancePos(frameExpr1, objVar1, frameExpr2, objVar2, op, threshold);
+    }
+
+    FormulaPtr parseDistanceEstimationPredicate() {
+        advance(); // consume 'dist_est'
+        expect(TokenType::LPAREN, "Expected '('");
+        FrameExpr frameExpr1 = parseFrameExprInsideFuncParams();
+        expect(TokenType::COMMA, "Expected ','");
+        std::string objVar1 = expect(TokenType::IDENTIFIER, "Expected object variable").value;
+        expect(TokenType::COMMA, "Expected ','");
+        FrameExpr frameRefExpr2 = parseFrameExprInsideFuncParams();
+        expect(TokenType::COMMA, "Expected ','");
+        std::string objVar2 = expect(TokenType::IDENTIFIER, "Expected object variable").value;
+        expect(TokenType::COMMA, "Expected ','");
+        FrameExpr frameEstimationExpr2 = parseFrameExprInsideFuncParams();
+        expect(TokenType::RPAREN, "Expected ')'");
+        
+        ComparisonOp op = parseComparisonOp();
+        
+        Token numToken = expect(TokenType::NUMBER, "Expected distance estimation threshold");
+        double threshold = std::stod(numToken.value);
+        
+        return std::make_shared<DistanceEstimationPredicate>(frameExpr1, objVar1, frameRefExpr2, objVar2, frameEstimationExpr2, op, threshold);
     }
     
     FormulaPtr parseIoUPredicate() {
