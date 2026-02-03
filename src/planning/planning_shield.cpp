@@ -265,6 +265,9 @@ PlanningShield::InternalVerificationResult PlanningShield::doVerify(
 
     // Get the latest perception data
     const nlohmann::json& perception_data = recorded_data[PerceptionObjectTopic::TRACE_KEY()].back();
+
+    std::set<size_t> collision_index_set;
+    bool is_safe = true;
     
     // Iterate over each detected object
     for (const auto& obj : perception_data["objects"]) {
@@ -381,7 +384,7 @@ PlanningShield::InternalVerificationResult PlanningShield::doVerify(
             std::vector<bool> collision_series;
             std::vector<float> distance_series;
             // Track collision information for potential trajectory revision
-            std::vector<size_t> collision_indices;
+            // std::vector<size_t> collision_indices;
             
             // For each ego trajectory point, interpolate object position and check collision
             for (size_t i = 0; i < trajectory_timestamps.size(); ++i) {
@@ -443,7 +446,8 @@ PlanningShield::InternalVerificationResult PlanningShield::doVerify(
                 
                 // Track collision indices for trajectory revision
                 if (collision) {
-                    collision_indices.push_back(i + closest_point_id);
+                    // collision_indices.push_back(i + closest_point_id);
+                    collision_index_set.insert(i + closest_point_id);
                 }
             }
             
@@ -453,11 +457,14 @@ PlanningShield::InternalVerificationResult PlanningShield::doVerify(
                 // for (const auto& pt : path_points) {
                 //     std::cout << "  (" << pt["position"]["x"] << ", " << pt["position"]["y"] << "), " << std::endl;
                 // }
-                return {false, collision_indices};
+                // return {false, collision_indices};
+                is_safe = false;
             }
         }
     }
-    return {true, {}};
+
+    std::vector<size_t> collision_indices(collision_index_set.begin(), collision_index_set.end());
+    return {is_safe, collision_indices};
 }
 
 std::optional<autoware_planning_msgs::msg::Trajectory> PlanningShield::handleScenarioPlanningTrajectory(

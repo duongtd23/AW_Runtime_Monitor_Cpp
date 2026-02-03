@@ -36,12 +36,8 @@ link_directories(
 add_executable(monitor 
   src/planning/planning_shield.cpp
   src/planning/trajectory_revision.cpp
-  src/groundtruth/groundtruth_kinematic.cpp
-  src/groundtruth/groundtruth_size.cpp
-  src/localization/estimated_kinematic.cpp
   src/perception/perception_shield.cpp
   src/control/control_command.cpp
-  src/metadata/awsim_metadata.cpp
   src/recorder/aw_recorder.cpp
   src/aw_rt_monitor.cpp
 )
