@@ -13,10 +13,10 @@
 PlanningShield::PlanningShield(
         const std::string& spec_formula_str, const std::string& spec_syntax_file_path,
         float speed_threshold_activation, float time_bound, float distance_bound,
-        const RevisionConfig& revision_config)
+        const RevisionConfig& revision_config, bool enable_revision)
     : spec_syntax_file_path_(spec_syntax_file_path),
       speed_threshold_activation_(speed_threshold_activation), 
-      time_bound_(time_bound), distance_bound_(distance_bound),
+      time_bound_(time_bound), distance_bound_(distance_bound), enable_revision_(enable_revision),
       logger_(rclcpp::get_logger("planning_shield")) {
 
     drivable_area_checker_ = ExternalDrivableAreaChecker();
@@ -75,10 +75,10 @@ PlanningShield::PlanningShield(
 
     replaceSubStr(renamed_spec_formula_str, "\\\\", "\\");
 
-    std::cout << "Spec formula: " << renamed_spec_formula_str << std::endl;
-    for (const std::string& p : this->propositions_) {
-        std::cout << "Proposition: " << p << std::endl;
-    }
+    // std::cout << "Planning monitor is enabled, formula: " << renamed_spec_formula_str << std::endl;
+    // for (const std::string& p : this->propositions_) {
+    //     std::cout << "Proposition: " << p << std::endl;
+    // }
 
     try {
         this->spec_formula_ = spot::parse_infix_psl(renamed_spec_formula_str);
@@ -105,8 +105,7 @@ PlanningShield::PlanningShield(
  * @return true if the trajectory is safe, false otherwise
  */
 PlanningShield::VerificationResult PlanningShield::verify(const autoware_planning_msgs::msg::Trajectory& planning_msg, 
-        const nlohmann::json& recorded_data,
-        bool enable_revision) {
+        const nlohmann::json& recorded_data) {
     // auto start_time = std::chrono::high_resolution_clock::now();
     
     if (recorded_data.find(EstimatedKinematicTopic::TRACE_KEY()) == recorded_data.end() ||
@@ -164,7 +163,7 @@ PlanningShield::VerificationResult PlanningShield::verify(const autoware_plannin
     // Violation found - attempt trajectory revision
     RCLCPP_INFO(logger_, "Safety violation detected with %zu collision points.", collision_indices.size());
 
-    if (!enable_revision) {
+    if (!enable_revision_) {
         RCLCPP_INFO(logger_, "Revision disabled. Returning original trajectory.");
         latest_verification_result_ = {false, false, planning_msg};
         return {false, false, planning_msg};
@@ -488,6 +487,7 @@ std::optional<autoware_planning_msgs::msg::Trajectory> PlanningShield::handleSce
 
         for (size_t i = 0; i < updated_trajectory.points.size(); ++i) {
             updated_trajectory.points[i].longitudinal_velocity_mps = scenario_planning_trajectory_speed;
+            // other fields are irrelevant for scenario planning trajectory
             updated_trajectory.points[i].time_from_start.sec = 0;
             updated_trajectory.points[i].time_from_start.nanosec = 0;
             updated_trajectory.points[i].lateral_velocity_mps = 0.0;

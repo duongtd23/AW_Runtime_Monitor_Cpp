@@ -15,16 +15,23 @@ aw_recorder:
     - CameraFootage
 
 ## ============================================================================
-## For perception shield
+## For perception monitoring and shielding
 ## ============================================================================
-    perception_shield: true
+    # 1. if perception_monitor is false, disable monitoring and shielding
+    # 2. if perception_monitor is true:
+    #  2.1. if perception_shield is false, only monitoring, but not modify perception outputs
+    #  2.2. if perception_shield is true, both monitoring and shielding (modifying perception outputs)
+    perception_monitor: true
+    perception_shield: false
     # perception_spec: '[](x.(forall id@x. ((present(x+1, id)) -> present(x+2, id) )))'
-    perception_spec: >
-        [](x.(forall id@x. (
-                    (dist_ego(x,id) < 50 && angle_ego(x,id) > -60 && angle_ego(x,id) < 60 
-                        && present(x+1, id)) 
-                    -> (present(x+2, id) || exists id2@(x+2). (dist_est(x+2,id2,x+1,id,x+2) < 0.5)) 
-            )))
+    # perception_spec: >
+    #     [](x.(forall id@x. (
+    #                 (P(x,id) >= 0.3
+    #                     && dist_ego(x,id) < 50 && angle_ego(x,id) > -60 && angle_ego(x,id) < 60 
+    #                     && present(x+1, id)) 
+    #                 -> (present(x+2, id) || exists id2@(x+2). (dist_est(x+2,id2,x+1,id,x+2) < 0.5)) 
+    #         )))
+    perception_spec: 'true'
     window_size: 3
     # Don't activate the shield if the ego speed is below this threshold
     speed_threshold_perp_shield_activation: 3.0 # m/s
@@ -33,8 +40,14 @@ aw_recorder:
 ## ============================================================================
 ## For planning shield
 ## ============================================================================
-    planning_shield: true 
-    planning_safety_spec: '[] (pathConfidence >= 0.1 /\ time <= 3.0 -> ~ collision)'
+    # 1. if planning_monitor is false, disable monitoring and shielding
+    # 2. if planning_monitor is true:
+    #  2.1. if planning_shield is false, only monitoring, but not modify trajectories
+    #  2.2. if planning_shield is true, both monitoring and shielding (modifying trajectories)
+    planning_monitor: true
+    planning_shield: false
+    # planning_safety_spec: '[] (pathConfidence >= 0.1 /\ time <= 3.0 -> ~ collision)'
+    planning_safety_spec: 'True'
     spec_syntax_file_path: 'formal_spec/syntax.maude'
     
     # Don't activate the shield if the ego speed is below this threshold
@@ -87,3 +100,20 @@ aw_recorder:
     revision_max_candidates: 50
     revision_min_points: 30
 
+    ## others
+    # planning_trajectory_topic: '/planning/scenario_planning/trajectory'  # the topic name differs in different versions of Autoware
+    # planning_trajectory_topic: '/planning/trajectory'
+
+# ## ============================================================================
+# ## For PRSS (future)
+# ## ============================================================================
+# prss_monitor: true
+# prss_shield: true
+# # prss parameters
+# prss_rho: 0.5  # reaction time in seconds
+# prss_alpha_max: 5.0  # maximum acceleration
+# prss_beta_min: 5.0  # minimum ego braking
+# prss_beta_max: 5.0  # maximum NPC braking
+# prss_epsilon_max: 2.0  # maximum distance noise in m
+# prss_gamma_max: 1.5  # maximum velocity error
+# prss_delta: 0.4  # maximum perception lag in seconds

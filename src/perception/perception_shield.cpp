@@ -146,12 +146,11 @@ tqtl::EgoObject extractEgoLatestState(const nlohmann::json& recorded_data) {
  * 
  * @param perp_obj_msg The current perception message to verify
  * @param recorded_data Recorded data in JSON format (used to get current ego state, etc.)
- * @return std::optional<autoware_perception_msgs::msg::PredictedObjects> Modified message if verification fails, else std::nullopt
+ * @return VerificationResult
  */
-std::optional<autoware_perception_msgs::msg::PredictedObjects> PerceptionShield::verify(
+PerceptionShield::VerificationResult PerceptionShield::verify(
         const autoware_perception_msgs::msg::PredictedObjects& perp_obj_msg, 
         const nlohmann::json& recorded_data) {
-    auto start_time = std::chrono::high_resolution_clock::now();
     tqtl::Frame frame;
     const double curr_timest = timestamp(perp_obj_msg.header.stamp);
     frame.setTimestamp(curr_timest);
@@ -165,20 +164,45 @@ std::optional<autoware_perception_msgs::msg::PredictedObjects> PerceptionShield:
         perp_data_stream_.removeOldestFrame();
     }
 
-    // only verify when the ego vehicle speed is above the threshold
-    if (getCurrentSpeed(recorded_data) >= this->speed_threshold_activation_) {
-        auto cloned_msg = perp_obj_msg;
-        bool revised = false;
+    // if the ego vehicle speed is below the threshold, skip the verification
+    if (getCurrentSpeed(recorded_data) < this->speed_threshold_activation_) {
+        PerceptionShield::VerificationResult verif_result;
+        verif_result.is_safe = true;
+        verif_result.is_revised = false;
+        return verif_result;
+    }
+    
+    // --- Ego speed is above threshold, perform verification ---
+    // Evaluate the perception specification
+    tqtl::QualityValue result = tqtl::evaluate(perception_spec_, perp_data_stream_, 0);
+
+    // If revision is disabled, return immediately
+    if (!enable_revision_) {
+        PerceptionShield::VerificationResult verif_result;
+        verif_result.is_safe = result.isSatisfied();
+        verif_result.is_revised = false;
+        return verif_result;
+    }
+
+    // --- Revision enabled, try to revise the message if verification fails ---
+    // auto cloned_msg = perp_obj_msg;
+    PerceptionShield::VerificationResult verif_result;
+    verif_result.is_safe = result.isSatisfied();
+    verif_result.is_revised = false;
+    verif_result.revised_msg = perp_obj_msg;
+
+    if (enable_revision_) {
+        // continue predicting previously dropped objects
         for (auto it = dropped_object_predictions_.begin();
                 it != dropped_object_predictions_.end(); ) {
-            revised = true;
             auto& previous_detection = *it;
 
             if(!frame.hasObject(uuidstr(previous_detection.predicted_object.object_id.uuid))) {
                 // predict based on previously predicted velocity and pose
                 auto predicted_obj = predictDroppedObjectFromPreviousDetection(
                     previous_detection, curr_timest);
-                cloned_msg.objects.push_back(predicted_obj);
+                verif_result.revised_msg.objects.push_back(predicted_obj);
+                verif_result.is_revised = true;
             }
 
             // update the dropped object prediction record
@@ -191,56 +215,48 @@ std::optional<autoware_perception_msgs::msg::PredictedObjects> PerceptionShield:
                 ++it;
             }
         }
+    }
+
+    if (!result.isSatisfied()) {
+        // --- Verification failed, return modified msg ---
+        if (recorded_perp_msgs_.empty()) {
+            RCLCPP_WARN(logger_, "No available history data.");
+            return verif_result;
+        }
+        auto last_perp_msg = recorded_perp_msgs_.back();
+        auto current_ids = perp_data_stream_.getFrame(perp_data_stream_.length() - 1).getObjectIds();
+        auto dropped_ids = findDroppedObjectIds(current_ids, last_perp_msg);
         
-        // Evaluate the perception specification
-        tqtl::QualityValue result = tqtl::evaluate(perception_spec_, perp_data_stream_, 0);
-        if (!result.isSatisfied()) {
-            // --- Verification failed, return modified msg ---
-            if (recorded_perp_msgs_.empty()) {
-                RCLCPP_WARN(logger_, "No available history data.");
-                return revised ? std::make_optional(cloned_msg) : std::nullopt;
-            }
-            auto last_perp_msg = recorded_perp_msgs_.back();
-            auto current_ids = perp_data_stream_.getFrame(perp_data_stream_.length() - 1).getObjectIds();
-            auto dropped_ids = findDroppedObjectIds(current_ids, last_perp_msg);
+        if (dropped_ids.empty()) {
+            RCLCPP_ERROR(logger_, "No dropped objects found, but spec violated.");
+            RCLCPP_WARN(logger_, "Timestamp: %f", curr_timest);
+            std::cout << "Data stream: " << perp_data_stream_ << std::endl;
+            return verif_result;
+        }
+        for (const auto& drop_id : dropped_ids) {
+            // predict the dropped object state
+            auto history = extractObjectHistory(drop_id, recorded_perp_msgs_);
+            KalmanObjectPrediction kalman_predictor;
+            auto predicted_state = kalman_predictor.predictDroppedObject(
+                drop_id, history, 
+                perp_data_stream_.getFrame(perp_data_stream_.length() - 1).getTimestamp());
             
-            if (dropped_ids.empty()) {
-                RCLCPP_ERROR(logger_, "No dropped objects found, but spec violated.");
-                RCLCPP_WARN(logger_, "Timestamp: %f", curr_timest);
-                std::cout << "Data stream: " << perp_data_stream_ << std::endl;
-                return revised ? std::make_optional(cloned_msg) : std::nullopt;
-            }
-            for (const auto& drop_id : dropped_ids) {
-                // predict the dropped object state
-                auto history = extractObjectHistory(drop_id, recorded_perp_msgs_);
-                KalmanObjectPrediction kalman_predictor;
-                auto predicted_state = kalman_predictor.predictDroppedObject(
-                    drop_id, history, 
-                    perp_data_stream_.getFrame(perp_data_stream_.length() - 1).getTimestamp());
-                
-                // confirm if adding this predicted object will help satisfy the spec
-                auto data_obj = rosObjectToDataObject(predicted_state);
-                auto test_stream = perp_data_stream_.cloneAndAppendObject(data_obj);
-                auto test_result = tqtl::evaluate(perception_spec_, test_stream, 0);
-                if (test_result.isSatisfied()) {
-                    revised = true;
-                    cloned_msg.objects.push_back(predicted_state);
+            // confirm if adding this predicted object will help satisfy the spec
+            auto data_obj = rosObjectToDataObject(predicted_state);
+            auto test_stream = perp_data_stream_.cloneAndAppendObject(data_obj);
+            auto test_result = tqtl::evaluate(perception_spec_, test_stream, 0);
+            if (test_result.isSatisfied()) {
+                verif_result.is_revised = true;
+                verif_result.revised_msg.objects.push_back(predicted_state);
 
-                    // record this dropped object prediction
-                    DroppedObjectPrediction drop_record;
-                    drop_record.timestamp = curr_timest;
-                    drop_record.predicted_object = predicted_state;
-                    drop_record.no_frames_fixed = 1;
-                    dropped_object_predictions_.push_back(drop_record);
-
-                    auto end_time =  std::chrono::high_resolution_clock::now();
-                    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
-                    RCLCPP_WARN(logger_, "Spec violated (verif time: %.1f milliseconds).", duration.count() / 1000.0);
-                }
+                // record this dropped object prediction
+                DroppedObjectPrediction drop_record;
+                drop_record.timestamp = curr_timest;
+                drop_record.predicted_object = predicted_state;
+                drop_record.no_frames_fixed = 1;
+                dropped_object_predictions_.push_back(drop_record);
             }
         }
-        return revised ? std::make_optional(cloned_msg) : std::nullopt;
     }
-    // If the verification succeeds, return an empty optional
-    return std::nullopt;
+    return verif_result;
 }

@@ -56,13 +56,13 @@ public:
         // Get all adjacent lanes including current lane
         // getAllSharedLineStringLanelets returns lanelets sharing linestrings
         // Parameters: (lanelet, search_right, search_left, include_opposite, invert_opposite)
-        lanelet::ConstLanelets all_adjacent = route_handler_.getAllSharedLineStringLanelets(
-            lanelet, 
-            true,   // search right
-            true,   // search left
-            false,  // don't include opposite direction
-            false   // don't invert
-        );
+        // lanelet::ConstLanelets all_adjacent = route_handler_.getAllSharedLineStringLanelets(
+        //     lanelet, 
+        //     true,   // search right
+        //     true,   // search left
+        //     false,  // don't include opposite direction
+        //     false   // don't invert
+        // );
 
         // Get the leftmost and rightmost
         lanelet::ConstLanelet leftmost = route_handler_.getMostLeftLanelet(

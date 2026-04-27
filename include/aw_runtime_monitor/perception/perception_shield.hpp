@@ -13,13 +13,18 @@
 class PerceptionShield
 {
 public:
+    struct VerificationResult {
+        bool is_safe; // true iff the original perception message satisfies the specification
+        bool is_revised; // true iff the original message is revised
+        autoware_perception_msgs::msg::PredictedObjects revised_msg; //non-sense unless is_revised == true
+    };
     struct DroppedObjectPrediction {
         double timestamp;
         autoware_perception_msgs::msg::PredictedObject predicted_object;
         size_t no_frames_fixed;
     };
     PerceptionShield(std::string spec_formula_str="T", size_t window_size=10, 
-            double speed_threshold_activation=3.0, size_t max_prediction_frames=3) :
+            double speed_threshold_activation=3.0, size_t max_prediction_frames=3, bool enable_revision=true) :
             logger_(rclcpp::get_logger("perception_shield")) {
         // parse the perception spec formula
         this->perception_spec_ = tqtl::Parser::parse(spec_formula_str);
@@ -27,10 +32,10 @@ public:
         this->perp_data_stream_ = tqtl::DataStream();
         this->speed_threshold_activation_ = speed_threshold_activation;
         this->max_prediction_frames_ = max_prediction_frames;
+        this->enable_revision_ = enable_revision;
     }
 
-    std::optional<autoware_perception_msgs::msg::PredictedObjects>
-    verify(const autoware_perception_msgs::msg::PredictedObjects& perp_obj_msg, const nlohmann::json& recorded_data);
+    VerificationResult verify(const autoware_perception_msgs::msg::PredictedObjects& perp_obj_msg, const nlohmann::json& recorded_data);
 
     tqtl::FormulaPtr getSpecFormula() const {
         return perception_spec_;
@@ -49,6 +54,8 @@ public:
         recorded_perp_msgs_.clear();
     }
 private:
+    bool enable_revision_ = true;
+
     // dynamically change
     tqtl::DataStream perp_data_stream_;
     std::vector<autoware_perception_msgs::msg::PredictedObjects> recorded_perp_msgs_;

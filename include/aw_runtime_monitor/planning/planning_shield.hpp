@@ -32,7 +32,8 @@ public:
                    float speed_threshold_activation,
                    float time_bound,
                    float distance_bound,
-                   const RevisionConfig& revision_config);
+                   const RevisionConfig& revision_config,
+                   bool enable_revision = true);
 
     struct VerificationResult {
         bool is_safe; // if the original trajectory is safe
@@ -52,8 +53,7 @@ public:
      * @return VerificationResult containing the safety status and revised trajectory if applicable
      */
     VerificationResult verify(const autoware_planning_msgs::msg::Trajectory& trajectory_msg, 
-                const nlohmann::json& recorded_data,
-                bool enable_revision = true);
+                const nlohmann::json& recorded_data);
 
     InternalVerificationResult doVerify(
         const autoware_planning_msgs::msg::Trajectory& trajectory_msg,
@@ -122,6 +122,8 @@ private:
     float time_bound_;
     // ignore objects farther than this distance bound (to boost the performance)
     float distance_bound_;
+    
+    bool enable_revision_ = true;
 
     // Drivable area checker
     ExternalDrivableAreaChecker drivable_area_checker_;

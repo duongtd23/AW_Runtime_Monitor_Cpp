@@ -7,9 +7,8 @@
 #include "rclcpp/serialization.hpp"
 #include "nlohmann/json.hpp"
 
-const std::string PLTR_TOPIC_NAME = "/planning/scenario_planning/trajectory";
 const std::string PLTR_MSG_TYPE_STR = "autoware_planning_msgs/msg/Trajectory";
-const std::string PLTR_UNVERIFIED_TOPIC_NAME = PLTR_TOPIC_NAME + "_unverified";
+// const std::string PLTR_UNVERIFIED_TOPIC_NAME = PLTR_TOPIC_NAME + "_unverified";
 
 // helper functions to convert planning trajectory message to JSON
 inline nlohmann::json planningTrajMsgToJson(const autoware_planning_msgs::msg::Trajectory& trajectory_msg){
@@ -50,8 +49,8 @@ inline nlohmann::json planningMsgToJson(const std::shared_ptr<rclcpp::Serialized
 class PlanningTrajectoryTopic : public Topic 
 {
 public:
-    PlanningTrajectoryTopic(bool shielded=false)
-        : Topic(shielded ? PLTR_UNVERIFIED_TOPIC_NAME : PLTR_TOPIC_NAME, PLTR_MSG_TYPE_STR) {};
+    PlanningTrajectoryTopic(std::string topic_name, bool shielded=false)
+        : Topic(shielded ? topic_name + "_unverified" : topic_name, PLTR_MSG_TYPE_STR) {};
     
     // Implement pure virtual functions from Topic
     nlohmann::json msgToJson(const std::shared_ptr<rclcpp::SerializedMessage>& msg) override {
@@ -63,11 +62,16 @@ public:
     }
     static std::string TRACE_KEY() { return "planning_trajectory"; }
     static std::string SHIELDED_TRACE_KEY() { return TRACE_KEY() + "_shielded"; }
+    static std::string VIOLATED_FRAMES_TRACE_KEY() { return TRACE_KEY() + "_violated_frames"; }
 
     rclcpp::QoS qosProfile() override {
         rclcpp::QoS qos(rclcpp::KeepLast(1));
         qos.reliability(rclcpp::ReliabilityPolicy::Reliable);
         return qos;
+    }
+
+    static bool isUnshieldedTopic(const std::string& topic_name) {
+        return topic_name == "/planning/trajectory_unverified" || topic_name == "/planning/scenario_planning/trajectory_unverified";
     }
 };
 

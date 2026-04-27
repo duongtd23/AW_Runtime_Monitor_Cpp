@@ -43,6 +43,7 @@ public:
     }
     static std::string TRACE_KEY() { return "perception_objects"; }
     static std::string SHIELDED_TRACE_KEY() { return TRACE_KEY() + "_shielded"; }
+    static std::string VIOLATED_FRAMES_TRACE_KEY() { return TRACE_KEY() + "_violated_frames"; }
 
     rclcpp::QoS qosProfile() override {
         rclcpp::QoS qos(rclcpp::KeepLast(1));
