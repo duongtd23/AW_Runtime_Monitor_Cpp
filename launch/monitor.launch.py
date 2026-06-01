@@ -33,7 +33,7 @@ def generate_launch_description():
         no_sim,
         Node(
             package='aw_runtime_monitor',
-            executable='monitor',
+            executable='aw_rt_monitor',
             name='aw_recorder',
             output='screen',
             parameters=[config,  # <-- default config file

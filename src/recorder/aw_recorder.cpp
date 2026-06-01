@@ -90,7 +90,7 @@ void AWRecorder::initializeParameters() {
 
     // Parameters that are less likely to change per run
     this->declare_parameter<std::vector<std::string>>("topics", topic_names_);
-    // this->declare_parameter<std::string>("planning_trajectory_topic", "/planning/trajectory");
+    this->declare_parameter<std::string>("planning_trajectory_topic", "/planning/trajectory");
 
     // planning shield parameters (config in default.yaml)
     this->declare_parameter<bool>("planning_monitor", false);
@@ -179,12 +179,15 @@ void AWRecorder::perceptionShieldInit() {
  */
 std::string AWRecorder::getPlannedTrajectoryTopicName() {
     // Check if /planning/trajectory topic exists
-    auto topic_names_and_types = this->get_topic_names_and_types();
-    if (topic_names_and_types.find("/planning/trajectory") != topic_names_and_types.end()) {
-        return "/planning/trajectory";
-    } else {
-        return "/planning/scenario_planning/trajectory";
-    }
+    // NOT RELIABLE. Recommend to use config value from .yaml file instead.
+    // auto topic_names_and_types = this->get_topic_names_and_types();
+    // if (topic_names_and_types.find("/planning/trajectory") != topic_names_and_types.end()) {
+    //     return "/planning/trajectory";
+    // } else {
+    //     return "/planning/scenario_planning/trajectory";
+    // }
+
+    return this->get_parameter("planning_trajectory_topic").as_string();
 }
 
 /**
@@ -298,9 +301,14 @@ AWRecorder::AWRecorder() : Node("aw_recorder") {
 
 void AWRecorder::reset() {
     this->is_recording_ = false;
-    // if (planning_shield_enabled_)
-    //     this->planning_shield_.verification_times_.clear();
 
+    // Clear recorded data by swapping with an empty object to ensure memory deallocation
+    {
+        nlohmann::json empty_json;
+        this->recorded_data_.swap(empty_json);
+    }
+
+    // Reinitialize recorded_data_ structure
     for (auto topic : topics_) {
         if (topic->topic_name == GROUNDTRUTH_KINEMATIC_TOPIC_NAME ||
             topic->topic_name == ESTIMATED_KIN_TOPIC_NAME ||
@@ -314,7 +322,7 @@ void AWRecorder::reset() {
         } 
         else if (topic->topic_name == GROUNDTRUTH_SIZE_TOPIC_NAME ||
                 topic->topic_name == AWSIM_METADATA_TOPIC_NAME) {
-            this->recorded_data_[topic->traceKey()].clear();
+            this->recorded_data_[topic->traceKey()] = nlohmann::json::object();
         } 
     }
     if (perception_shield_enabled_) {
@@ -328,11 +336,18 @@ void AWRecorder::reset() {
     if (planning_shield_enabled_) {
         // to record the revised planned trajectories
         this->recorded_data_[PlanningTrajectoryTopic::SHIELDED_TRACE_KEY()] = nlohmann::json::array();
+        this->planning_shield_.reset();
     } else if (planning_monitor_enabled_) {
         // to record the frames that violated the planner spec
         this->recorded_data_[PlanningTrajectoryTopic::VIOLATED_FRAMES_TRACE_KEY()] = nlohmann::json::array();
+        this->planning_shield_.reset();
     }
-    this->frames_.clear();
+    
+    // Clear frames vector and deallocate OpenCV memory
+    {
+        std::vector<std::pair<cv::Mat, double>> empty_frames;
+        this->frames_.swap(empty_frames);
+    }
 }
 
 void AWRecorder::createSubscriptions() {
@@ -404,7 +419,7 @@ void AWRecorder::unifiedCallback(const std::shared_ptr<rclcpp::SerializedMessage
         if (planning_monitor_enabled_) {
             // check the safety of the planned trajectory
             auto start_time = std::chrono::high_resolution_clock::now();
-            auto verif_result = this->planning_shield_.verify(trajectory_msg, this->recorded_data_);
+            auto verif_result = this->planning_shield_.verify2(trajectory_msg, this->recorded_data_);
 
             if (!verif_result.is_safe) {
                 auto end_time =  std::chrono::high_resolution_clock::now();
@@ -463,8 +478,8 @@ void AWRecorder::unifiedCallback(const std::shared_ptr<rclcpp::SerializedMessage
 
                 auto msg_time = timestamp(perp_obj_msg.header);
                 RCLCPP_WARN(this->get_logger(), "Perception spec violated [%lf] (verif time: %.1f ms).", msg_time, duration / 1000.0);
-                
-                if (perception_monitor_enabled_ && !perception_shield_enabled_)
+
+                if (!perception_shield_enabled_)
                     this->recorded_data_[PerceptionObjectTopic::VIOLATED_FRAMES_TRACE_KEY()].emplace_back(msg_time);
                 // write the revised message to the recorded data
                 if (perception_shield_enabled_ && verif_result.is_revised)
@@ -507,7 +522,9 @@ void AWRecorder::imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr &ms
     }
     cv::Mat frame;
     try {
-        frame = cv_bridge::toCvShare(msg, "bgr8")->image.clone();  // clone() to store safely
+        // Use toCvCopy to create an independent copy that owns its data
+        // This avoids the double-copy overhead of toCvShare()->clone()
+        frame = cv_bridge::toCvCopy(msg, "bgr8")->image;
     } catch (cv_bridge::Exception &e) {
         RCLCPP_ERROR(this->get_logger(), "cv_bridge exception: %s", e.what());
         return;
@@ -527,8 +544,6 @@ void AWRecorder::stopRecording() {
     std::string output_path = this->output_path_ + "_sim" + std::to_string(no_sim_);
     this->dumpDataToFile(output_path);
     this->saveVideo(output_path);
-    // this->recorded_data_.clear();
-    // this->frames_.clear();
 
     // if (planning_shield_enabled_) {
     //     std::cout << "Verification times (ms): ";

@@ -21,6 +21,10 @@
 #include <pty.h>
 #include <sys/wait.h>
 
+#include "fqltl/fqltl.hpp"
+#include "fqltl/evaluator.hpp"
+#include "fqltl/data_object.hpp"
+
 using ComparisonFunction = std::function<bool(float)>;
 
 class PlanningShield 
@@ -63,6 +67,21 @@ public:
         const glm::vec2& ego_size,
         const glm::vec2& ego_center_offset);
 
+
+    /**
+     * @brief Another implementation
+     */
+    VerificationResult verify2(const autoware_planning_msgs::msg::Trajectory& trajectory_msg, 
+                const nlohmann::json& recorded_data);
+
+    InternalVerificationResult doVerify2(
+        const autoware_planning_msgs::msg::Trajectory& trajectory_msg,
+        const nlohmann::json& recorded_data,
+        size_t starting_point_id,
+        // const glm::vec3& current_position, // current ego position
+        const glm::vec2& ego_size,
+        const glm::vec2& ego_center_offset);
+
     void setMapForDrivableAreaChecker(const autoware_map_msgs::msg::LaneletMapBin::ConstSharedPtr map_msg) {
         drivable_area_checker_.setMap(map_msg);
     }
@@ -72,6 +91,15 @@ public:
 
     void clearRouteForDrivableAreaChecker() {
         drivable_area_checker_.clearRoute();
+    }
+
+    /**
+     * @brief Reset the planning shield state for a new recording session
+     */
+    void reset() {
+        // Clear the latest verification result
+        latest_verification_result_ = VerificationResult{false, false, autoware_planning_msgs::msg::Trajectory()};
+        latest_state_id_ = 0;
     }
 
     ExternalDrivableAreaChecker::DrivableAreaBounds getExpandedDrivableArea(
@@ -96,6 +124,7 @@ public:
     }
 private:
     // specification of the desired safety requirements
+    std::string original_spec_str_;
     spot::parsed_formula spec_formula_;
     std::string spec_syntax_file_path_;
     // list of atomic propositions in the specification
@@ -153,6 +182,9 @@ private:
 // ============================================================================
 inline glm::vec2 extractObjPosition(const autoware_planning_msgs::msg::TrajectoryPoint& entry) {
     return glm::vec2(entry.pose.position.x, entry.pose.position.y);
+}
+inline glm::vec3 extractObj3DPosition(const autoware_planning_msgs::msg::TrajectoryPoint& entry) {
+    return glm::vec3(entry.pose.position.x, entry.pose.position.y, entry.pose.position.z);
 }
 
 /**

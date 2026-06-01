@@ -228,8 +228,7 @@ PerceptionShield::VerificationResult PerceptionShield::verify(
         auto dropped_ids = findDroppedObjectIds(current_ids, last_perp_msg);
         
         if (dropped_ids.empty()) {
-            RCLCPP_ERROR(logger_, "No dropped objects found, but spec violated.");
-            RCLCPP_WARN(logger_, "Timestamp: %f", curr_timest);
+            RCLCPP_ERROR(logger_, "No dropped objects found, but spec violated [%f].", curr_timest);
             std::cout << "Data stream: " << perp_data_stream_ << std::endl;
             return verif_result;
         }

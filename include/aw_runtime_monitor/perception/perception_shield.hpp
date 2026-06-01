@@ -52,6 +52,10 @@ public:
     void reset() {
         perp_data_stream_.clear();
         recorded_perp_msgs_.clear();
+        dropped_object_predictions_.clear();
+        // Force deallocation
+        std::vector<autoware_perception_msgs::msg::PredictedObjects>().swap(recorded_perp_msgs_);
+        std::vector<DroppedObjectPrediction>().swap(dropped_object_predictions_);
     }
 private:
     bool enable_revision_ = true;
@@ -60,12 +64,13 @@ private:
     tqtl::DataStream perp_data_stream_;
     std::vector<autoware_perception_msgs::msg::PredictedObjects> recorded_perp_msgs_;
     // for each detected dropped object, we save the prediction information from the first frame when it was dropped
-    // it is used to continue predicting the dropped object for a few (precisely, max_prediction_frames_ - 1) frames afterwards
+    // this is used to continue predicting the dropped object for a few (precisely, max_prediction_frames_ - 1) frames afterwards
     std::vector<DroppedObjectPrediction> dropped_object_predictions_;
     size_t max_prediction_frames_ = 3; // max number of frames to keep predicting a dropped object
 
     // fixed per run
     tqtl::FormulaPtr perception_spec_;
+    // keep only up to window_size_ perception msgs
     size_t window_size_ = 10;
     double speed_threshold_activation_ = 3.0; // m/s
 
